@@ -1220,7 +1220,9 @@ def initialize_observables_dict_from_tables(
                         prediction_values = prediction_values[mask,:]
                         prediction_errors = prediction_errors[mask,:]
                         for key in observables['Data'][observable_label].keys():
-                            observables['Data'][observable_label][key] = observables['Data'][observable_label][key][mask]
+                            # Can only mask if we're working with a np array
+                            if isinstance(observables['Data'][observable_label], np.ndarray):
+                                observables['Data'][observable_label][key] = observables['Data'][observable_label][key][mask]
 
                 # Check that data and prediction have the same size
                 data_size = observables['Data'][observable_label]['y'].shape[0]
