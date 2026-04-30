@@ -37,18 +37,6 @@ class BaseEmulatorSettings:
             the emulator. The class itself is cached to minimize computation.
     """
 
-    # emulator_package: str
-    # analysis_name: str
-    # parameterization: str
-    # config_file: Path = attrs.field(converter=Path)
-    # analysis_config: dict[str, Any] = attrs.field(factory=dict)
-    # emulation_group_name: str | None = None  # <-- optional, passed from higher-level config
-    # config: dict[str, Any] = attrs.field(init=False)
-    # observables_table_dir: Path | str = attrs.field(init=False)
-    # observables_config_dir: Path | str = attrs.field(init=False)
-    # observables_filename: str = attrs.field(init=False)
-    # emulation_outputfile: Path = attrs.field(init=False)
-    # TODO(RJE): Starting actual settings here. Others should be passed in separately, I think...
     force_retrain: bool = attrs.field()
     _settings: dict[str, Any] = attrs.field()
     # TODO(RJE): Does this really belong here? Not sure...

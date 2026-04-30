@@ -16,11 +16,8 @@ Based in part on JETSCAPE/STAT code.
 
 from __future__ import annotations
 
-# TODO(RJE): Update the import list!
 from bayesian.mc_sampling.base import (  # noqa: F401
-    EmulatorBaseConfig,
-    EmulatorConfig,
-    EmulatorOrganizationConfig,
-    fit_emulators,
-    predict,
+    MCConfig,
+    credible_interval,
+    run_mcmc,
 )

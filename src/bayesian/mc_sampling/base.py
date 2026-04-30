@@ -17,6 +17,7 @@ import logging
 from pathlib import Path
 from types import ModuleType
 
+import numpy as np
 import yaml
 
 from bayesian import common_base, data_IO, emulation, register_modules
