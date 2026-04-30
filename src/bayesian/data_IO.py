@@ -1216,7 +1216,7 @@ def initialize_observables_dict_from_tables(
                         prediction_errors = prediction_errors[mask, :]
                         for key in observables["Data"][observable_label].keys():
                             # Can only mask if we're working with a np array
-                            if isinstance(observables["Data"][observable_label], np.ndarray):
+                            if isinstance(observables["Data"][observable_label][key], np.ndarray):
                                 observables["Data"][observable_label][key] = observables["Data"][observable_label][key][
                                     mask
                                 ]
