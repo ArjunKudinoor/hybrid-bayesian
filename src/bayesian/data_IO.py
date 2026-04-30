@@ -664,7 +664,6 @@ def data_array_from_h5(
     correlation_manager_data = observables.get('correlation_manager', None)
     if correlation_manager_data is not None:
         try:
-            from systematic_correlation import SystematicCorrelationManager
             correlation_manager = SystematicCorrelationManager.from_dict(correlation_manager_data)
             logger.info("Using correlation-aware systematic handling")
             return _data_array_from_h5_with_correlations(
@@ -1073,6 +1072,21 @@ def initialize_observables_dict_from_tables(
     for obs_name, sys_data_list, sys_theory_list, external_stat_cov in parsed_observables:
         systematic_config_map[obs_name] = (sys_data_list, sys_theory_list, external_stat_cov)
 
+    def _lookup_systematic_config(file_obs_label):
+        """Find the YAML observable entry that matches a file-derived label.
+
+        The YAML uses short labels like '5020__PbPb__hadron__pt_ch_cms', while
+        the loader produces file-derived labels with centrality suffixes such as
+        '5020__PbPb__hadron__pt_ch_cms____0-5'. Match by substring containment
+        (same convention as ObservableFilter.accept_observable). When multiple
+        YAML keys are contained in the file label, prefer the longest one.
+        """
+        match = None
+        for cfg_key in systematic_config_map:
+            if cfg_key in file_obs_label and (match is None or len(cfg_key) > len(match)):
+                match = cfg_key
+        return systematic_config_map[match] if match is not None else ([], [], None)
+
     if external_cov_file:
         external_cov_path = os.path.join(table_dir, external_cov_file)
         external_cov = _read_external_covariance(external_cov_path)
@@ -1127,9 +1141,7 @@ def initialize_observables_dict_from_tables(
 
             observable_label, _ = _filename_to_labels(filename)
 
-            sys_data_list, sys_theory_list, external_stat_cov_file = systematic_config_map.get(
-                observable_label, ([], [], None)
-            )
+            sys_data_list, sys_theory_list, external_stat_cov_file = _lookup_systematic_config(observable_label)
 
             # Check if this observable has per-observable external stat cov
             external_stat_cov_matrix = None
@@ -1238,9 +1250,33 @@ def initialize_observables_dict_from_tables(
                     msg = f'{observable_label} not found in observables[Data]: {data_keys}'
                     raise ValueError(msg)
 
-                # Check that data and prediction have the same size
+                # Check that data and prediction have the same size.
+                # If the published data file covers more bins than the simulation predicts
+                # (typical when HEPData provides a wider pT range than the model can cover),
+                # drop the lowest-pT data bins to align. The convention is HEPData-sorted
+                # bins (ascending pT) and the prediction covering the high-pT tail.
                 data_size = observables['Data'][observable_label]['y'].shape[0]
                 prediction_size = prediction_values.shape[0]
+                if data_size > prediction_size:
+                    n_drop = data_size - prediction_size
+                    obs_data = observables['Data'][observable_label]
+                    kept_xmin = obs_data['xmin'][n_drop] if obs_data['xmin'].size > n_drop else None
+                    kept_xmax = obs_data['xmax'][-1] if obs_data['xmax'].size else None
+                    logger.info(
+                        f"Auto-aligning '{observable_label}': data has {data_size} bins, "
+                        f"prediction has {prediction_size}. Dropping the lowest-pT "
+                        f"{n_drop} data bin(s) to match (kept x range [{kept_xmin}, {kept_xmax}])."
+                    )
+                    for key, val in list(obs_data.items()):
+                        if hasattr(val, 'shape') and val.shape and val.shape[0] == data_size:
+                            obs_data[key] = val[n_drop:] if val.ndim == 1 else val[n_drop:, ...]
+                        elif isinstance(val, dict):
+                            # nested dicts (e.g. 'systematics'): trim per-systematic arrays
+                            for sk, sv in val.items():
+                                if hasattr(sv, 'shape') and sv.shape and sv.shape[0] == data_size:
+                                    val[sk] = sv[n_drop:]
+                    data_size = prediction_size
+
                 if data_size != prediction_size:
                     msg = f'({filename_prediction_values}) has different shape ({prediction_size}) than Data ({data_size}) -- before cuts.'
                     raise ValueError(msg)
@@ -1251,11 +1287,19 @@ def initialize_observables_dict_from_tables(
                 for obs_key, cut_range in cuts.items():
                     if obs_key in observable_label:
                         x_min, x_max = cut_range
-                        mask = (x_min <= observables['Data'][observable_label]['xmin']) & (observables['Data'][observable_label]['xmax'] <= x_max)
-                        prediction_values = prediction_values[mask,:]
-                        prediction_errors = prediction_errors[mask,:]
-                        for key in observables['Data'][observable_label].keys():
-                            observables['Data'][observable_label][key] = observables['Data'][observable_label][key][mask]
+                        obs_data = observables['Data'][observable_label]
+                        mask = (x_min <= obs_data['xmin']) & (obs_data['xmax'] <= x_max)
+                        prediction_values = prediction_values[mask, :]
+                        prediction_errors = prediction_errors[mask, :]
+                        n_data = obs_data['y'].shape[0]
+                        for key, val in list(obs_data.items()):
+                            if hasattr(val, 'shape') and val.shape and val.shape[0] == n_data:
+                                obs_data[key] = val[mask] if val.ndim == 1 else val[mask, ...]
+                            elif isinstance(val, dict):
+                                # nested dicts (e.g. 'systematics'): mask per-systematic arrays
+                                for sk, sv in val.items():
+                                    if hasattr(sv, 'shape') and sv.shape and sv.shape[0] == n_data:
+                                        val[sk] = sv[mask]
 
                 # Check that data and prediction have the same size
                 data_size = observables['Data'][observable_label]['y'].shape[0]
@@ -1275,7 +1319,7 @@ def initialize_observables_dict_from_tables(
                     design_points_to_exclude=design_points_to_exclude,
                 )
 
-                _, sys_theory_list, _ = systematic_config_map.get(observable_label, ([], [], None))
+                _, sys_theory_list, _ = _lookup_systematic_config(observable_label)
                 model_name = analysis_config.get('model_name', 'exponential')
                 theory_systematics = _read_theory_systematics(table_dir, model_name, observable_label, sys_theory_list)
                 filtered_theory_systematics = _filter_systematics_by_config(theory_systematics, sys_theory_list)

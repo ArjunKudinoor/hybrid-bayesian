@@ -566,24 +566,41 @@ class SystematicCorrelationManager:
         
         logger.info("Correlation parameter configuration complete")
 
+    def _resolve_observable_key(self, obs_label: str) -> Optional[str]:
+        """
+        Find the registry key in `self.observable_systematics` that matches a file-derived
+        label. Registry keys come from the YAML (short, e.g. '5020__PbPb__hadron__pt_ch_cms')
+        whereas runtime obs_labels carry a centrality suffix
+        ('5020__PbPb__hadron__pt_ch_cms____0-5'). Substring containment, longest-match wins,
+        same convention as ObservableFilter.accept_observable.
+        """
+        if obs_label in self.observable_systematics:
+            return obs_label
+        match = None
+        for key in self.observable_systematics:
+            if key in obs_label and (match is None or len(key) > len(match)):
+                match = key
+        return match
+
     def register_observable_ranges(self, observable_ranges: List[Tuple[int, int, str]]) -> None:
         """
         Register which features belong to which observables and build correlation groups.
-        
+
         :param observable_ranges: List of (start_idx, end_idx, observable_label)
         """
         logger.info("Building correlation groups from observable ranges...")
 
         # Store observable ranges for later use in covariance calculation
         self._observable_ranges = observable_ranges
-        
+
         # Clear existing correlation groups
         self.correlation_groups.clear()
-        
+
         # Build correlation groups by going through each observable
         for start_idx, end_idx, obs_label in observable_ranges:
-            if obs_label in self.observable_systematics:
-                for sys_full_name in self.observable_systematics[obs_label]:
+            registry_key = self._resolve_observable_key(obs_label)
+            if registry_key is not None:
+                for sys_full_name in self.observable_systematics[registry_key]:
                     sys_info = self.systematic_info[sys_full_name]
                     
                     if not sys_info.is_uncorrelated:
@@ -719,8 +736,14 @@ class SystematicCorrelationManager:
         return C
 
     def get_systematic_names_for_observable(self, observable_label: str) -> List[str]:
-        """Get list of systematic full names for a given observable"""
-        return self.observable_systematics.get(observable_label, [])
+        """Get list of systematic full names for a given observable.
+
+        Accepts both the YAML registry key (e.g. '5020__PbPb__hadron__pt_ch_cms') and
+        a file-derived runtime label that extends it with a centrality suffix
+        ('5020__PbPb__hadron__pt_ch_cms____0-5'). See _resolve_observable_key.
+        """
+        registry_key = self._resolve_observable_key(observable_label)
+        return list(self.observable_systematics.get(registry_key, [])) if registry_key else []
 
     def get_all_systematic_names(self) -> List[str]:
         """Get consistent ordering of all systematic names"""
@@ -760,70 +783,72 @@ class SystematicCorrelationManager:
         # Initialize total covariance matrix
         total_cov = np.zeros((n_features, n_features))
         
-        # PATH 1: Process individual systematics (grouped by correlation tag)
+        # PATH 1: Process individual systematics, merged by correlation TAG.
+        #
+        # The tag identifies a single underlying physical source shared across observables
+        # (e.g. Pb-Pb Glauber T_AA at 5.02 TeV). Different experiments may publish that
+        # same source under different column names in their HEPData submissions
+        # (e.g. ALICE charged-hadrons publish it as `sys,norm`, CMS/ATLAS publish it as
+        # `sys,taa`). To reflect the shared source, we sum the per-bin uncertainties from
+        # all systematic columns carrying this tag into one combined sigma vector and
+        # form one outer-product block over the union of bins. Bins where no column
+        # in the tag is defined are excluded from the block (they don't carry this source).
         for group_tag, group_members in self.correlation_groups.items():
             if not group_tag:  # Skip empty tags (these are for summed systematics)
                 continue
-            
+
             logger.debug(f"Processing correlation group '{group_tag}' with {len(group_members)} members")
-            
-            # Build covariance for all members in this group
-            # group_members is: [(obs_label, start_idx, end_idx, systematic_full_name), ...]
-            # Get unique systematics in this group
-            unique_systematics = list(set([sys_name for _, _, _, sys_name in group_members]))
-            
-            # Process each unique systematic
-            for sys_full_name in unique_systematics:
+
+            # Aggregate per-bin contributions across all systematics in this tag.
+            # If two columns happen to land on the same bin, sum their squares (treating
+            # the column-level σ values as orthogonal contributions to one shared source);
+            # in practice each observable contributes through at most one column per tag.
+            bin_sigma_sq: Dict[int, float] = defaultdict(float)
+            cor_length = self.default_cor_length
+            cor_strength = self.default_cor_strength
+            for obs_label, start, end, sys_full_name in group_members:
                 if sys_full_name not in systematic_names:
                     logger.warning(f"Systematic '{sys_full_name}' not found in systematic_names")
                     continue
-                
                 sys_idx = systematic_names.index(sys_full_name)
                 sys_info = self.systematic_info.get(sys_full_name)
                 if not sys_info:
                     continue
-                
-                # Get all bins where this systematic appears (group-local indexing)
-                group_global_indices = []
-                for obs_label, start, end, sys_name in group_members:
-                    if sys_name == sys_full_name:
-                        group_global_indices.extend(range(start, end))
-                
-                # Build group-local mapping (ignores gaps)
-                global_to_group_local = {}
-                for group_local_idx, global_idx in enumerate(group_global_indices):
-                    global_to_group_local[global_idx] = group_local_idx
-                
-                # Get correlation parameters
                 cor_length = sys_info.cor_length
                 cor_strength = sys_info.cor_strength
-                uncertainties = systematic_uncertainties[:, sys_idx]
+                col = systematic_uncertainties[:, sys_idx]
+                for b in range(start, end):
+                    bin_sigma_sq[b] += float(col[b]) ** 2
 
-                logger.debug(f"{sys_full_name}: cor_length={cor_length}, cor_strength={cor_strength}, "
-                             f"n_bins_in_group={len(group_global_indices)}, "
-                             f"mode={'full' if cor_length == -1 else 'exponential'}")
+            if not bin_sigma_sq:
+                continue
 
-                # Apply correlation (vectorized across the group's bins)
-                idx = np.asarray(group_global_indices)
-                u = uncertainties[idx]
-                if cor_length == -1:
-                    # Full correlation across the group
-                    block = np.outer(u, u)
-                else:
-                    # TODO(design): when this group spans more than one observable, this
-                    # branch concatenates the bins of every observable in iteration order
-                    # and decays over the concatenated index. That makes the
-                    # cross-observable correlation depend on dict order and ignores the
-                    # physical gap between observables. Prefer cor_length=-1 for
-                    # multi-observable tags. The principled fix is to decay independently
-                    # within each observable's block and use a separate constant
-                    # cross-observable correlation factor for the same tag.
-                    local = np.arange(len(idx))
-                    distance = np.abs(local[:, None] - local[None, :])
-                    correlation = cor_strength * np.exp(-distance / cor_length)
-                    np.fill_diagonal(correlation, 1.0)
-                    block = correlation * np.outer(u, u)
-                total_cov[np.ix_(idx, idx)] += block
+            # Build the combined sigma vector over the union of bins, in sorted order.
+            sorted_bins = sorted(bin_sigma_sq.keys())
+            idx = np.asarray(sorted_bins)
+            u = np.sqrt(np.asarray([bin_sigma_sq[b] for b in sorted_bins]))
+
+            logger.debug(f":{group_tag}: cor_length={cor_length}, cor_strength={cor_strength}, "
+                         f"n_bins_in_tag={len(idx)}, "
+                         f"mode={'full' if cor_length == -1 else 'exponential'}")
+
+            if cor_length == -1:
+                # Full correlation across the tag's bins
+                block = np.outer(u, u)
+            else:
+                # TODO(design): when this group spans more than one observable, this
+                # branch concatenates bins in tag order and decays over the
+                # concatenated index. The cross-observable correlation thus depends
+                # on bin order and ignores the physical gap between observables.
+                # Prefer cor_length=-1 for multi-observable tags. The principled fix
+                # is to decay independently within each observable's block and use
+                # a separate constant cross-observable correlation factor.
+                local = np.arange(len(idx))
+                distance = np.abs(local[:, None] - local[None, :])
+                correlation = cor_strength * np.exp(-distance / cor_length)
+                np.fill_diagonal(correlation, 1.0)
+                block = correlation * np.outer(u, u)
+            total_cov[np.ix_(idx, idx)] += block
         
         # PATH 2: Process summed systematics (independent per observable)
         for sys_full_name, sys_info in self.systematic_info.items():
