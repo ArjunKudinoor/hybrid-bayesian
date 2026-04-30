@@ -27,22 +27,16 @@ the following functionality to interoperate with this package:
 - fit_emulator(...): Function to train the emulator given some data:
   ```python
   def fit_emulator(
-      parameters: npt.NDArray[np.float64],
-      results: dict[str, Any],
-      emulator_settings: EmulatorSettings,
-      additional_covariance: npt.NDArray[np.float64] | None = None,
-  ) -> dict[str, npt.NDArray[np.float64]]:
-      '''Fit the emulator to the data.  # fmt: skip
+      emulator_settings: EmulatorSettings, analysis_settings: analysis.AnalysisSettings
+  ) -> dict[str, Any]:
+      '''Fit the emulator(s) to the data included in the analysis, and write to file.  # fmt: skip
 
-      Args:
-        parameters: Array of parameter values (e.g. [tau0, c1, c2, ...]), with shape (n_samples, n_parameters).
-        results: Dictionary that stores output from the emulator.
-        emulator_settings: Emulator settings.
-        additional_covariance: Addition to the covariance due to the emulator.
-
-      Returns:
-          emulator_predictions: dictionary containing matrices of central values and covariance
-      '''  # fmt: skip
+    Args:
+        emulator_settings: Overall emulation configuration.
+        analysis_settings: Analysis settings.
+    Returns:
+        None.
+    '''  # fmt: skip
       ...
   ```
 - predict(...): Function to predict forward model values and covariance given a set of parameters.

@@ -2,7 +2,7 @@
 #-------------------------------------------
 # General parameters
 
-output_dir: '/Users/zhanj82/Desktop/JetScapeSTAT/Bayesian/results/20230116_20251106/'
+output_dir: "/Users/zhanj82/Desktop/JetScapeSTAT/Bayesian/results/20230116_20251106/"
 
 initialize_observables: True
 preprocess_input_data: True
@@ -23,10 +23,10 @@ debug_level: 0
 
 #-------------------------------------------
 # The design points, predictions, and experimental data are located in tables produced by the aggregation machinery
-observable_table_dir: '/Users/zhanj82/Desktop/JetScapeSTAT/Bayesian/data/20230116/tables'
+observable_table_dir: "/Users/zhanj82/Desktop/JetScapeSTAT/Bayesian/data/20230116/tables"
 
 # We make use of some info in the JETSCAPE-analysis config that was used to aggregate/plot observables
-observable_config_dir: '/Users/zhanj82/Desktop/JetScapeSTAT/Bayesian/config'
+observable_config_dir: "/Users/zhanj82/Desktop/JetScapeSTAT/Bayesian/config"
 
 # Filename of the observables file that we will use. This could be the standard one, or it could
 # have some predictions preprocessing applied to it.
@@ -39,14 +39,13 @@ observables_filename: "observables.h5"
 parameters:
   #-------------------------------------------
   # Preprocessing parameters
-  preprocessing_parameters: &default_preprocessing_parameters
-    # Stage 1: Filter design points (NEW 2025)
+  preprocessing_parameters: &default_preprocessing_parameters # Stage 1: Filter design points (NEW 2025)
     filtering:
       enable: true
-      method: 'relative_statistical_error'
-      threshold: 0.03    
-      problem_fraction_threshold: 0.                  
-      min_design_points: 50               # Keep at least 50
+      method: "relative_statistical_error"
+      threshold: 0.03
+      problem_fraction_threshold: 0.
+      min_design_points: 50 # Keep at least 50
       max_filtered_fraction: 0.6
     smoothing:
       enable: false
@@ -65,7 +64,7 @@ parameters:
     # Specify which kernels to include in the 'active' list -- can include multiple
     # Must have exactly one of: matern, rbf
     kernels:
-      active: ['matern', 'noise']
+      active: ["matern", "noise"]
 
       matern:
         nu: 1.5
@@ -82,8 +81,8 @@ parameters:
         type: "white"
         args:
           # NOTE: Can't raise to power in yaml, so you have to evaluate them by hand
-          noise_level: 0.25  # 0.5**2
-          noise_level_bounds: [0.0001, 1]  # [0.01**2, 1**2]
+          noise_level: 0.25 # 0.5**2
+          noise_level_bounds: [0.0001, 1] # [0.01**2, 1**2]
 
     # Gaussian Process Regressor
     GPR:
@@ -127,20 +126,20 @@ parameters:
 
 # Set general share parameters
 analysis_base: &model_base
-  model_name: 'MATTER+LBT'
-  parameterizations: ['exponential']
+  model_name: "MATTER+LBT"
+  parameterizations: ["exponential"]
   sqrts_list: [200, 2760, 5020]
-  centrality_range: [[0,10], [10, 30], [30, 50]]
+  centrality_range: [[0, 10], [10, 30], [30, 50]]
   # Can also be a list of centrality ranges. eg:
   #centrality_range: [[0, 10], [30, 50]]
-  recoil_scheme: 'negative_recominber'
+  recoil_scheme: "negative_recominber"
   parameterization:
     exponential:
-      names: ['$\alpha_S^{\rm{fix}}$', '$Q_0$', '$c_1$', '$c_2$', '$\tau_0$', '$c_3$']
+      names: ['$\alpha_S^{\rm{fix}}$', "$Q_0$", "$c_1$", "$c_2$", '$\tau_0$', "$c_3$"]
       min: [0.1, 1, 0.006737946999085467, 0.006737946999085467, 0, 0.049787068367863944]
       max: [0.5, 10, 10, 10, 1.5, 100]
     binomial:
-      names: ['$\alpha_S^{\rm{fix}}$', '$Q_0$', '$c_1$', '$c_2$', '$a$', '$b$', '$\tau_0$']
+      names: ['$\alpha_S^{\rm{fix}}$', "$Q_0$", "$c_1$", "$c_2$", "$a$", "$b$", '$\tau_0$']
       min: [0.1, 1, 0.006737946999085467, 0.006737946999085467, -10, -10, 0]
       max: [0.5, 10, 10, 10, 100, 100, 1.5]
   alpha: 0.2
@@ -160,15 +159,15 @@ analyses:
       emulators:
         default_group:
           <<: *default_emulator_parameters
-          emulator_name: sk_learn
+          emulator_package: sk_learn
           n_pc: 5
           observable_list:
-            - observable: '5020__PbPb__inclusive_jet__pt_alice__R0.2__0-10'
-              sys_data: ['sys_jec:alice', 'sys_taa:5020']
+            - observable: "5020__PbPb__inclusive_jet__pt_alice__R0.2__0-10"
+              sys_data: ["sys_jec:alice", "sys_taa:5020"]
               #external_stat_cov: 'Data/test_stat_cov_7x7.txt'
               #sys_data: ['sum:5:0.9']
-            - observable: '5020__PbPb__inclusive_jet__pt_cms__R0.2__0-10'
-              sys_data: ['sys_jec', 'sys_taa:5020']
+            - observable: "5020__PbPb__inclusive_jet__pt_cms__R0.2__0-10"
+              sys_data: ["sys_jec", "sys_taa:5020"]
               #sys_data: ['sum:5:0.8']
             #- observable: '5020__PbPb__inclusive_jet__pt_cms__R0.2__30-50'
       mcmc:
@@ -179,4 +178,4 @@ analyses:
       closure:
         <<: *default_closure_parameters
     <<: *model_base
-    plot_panel_shapes: [[3,3], [3,3], [3,3]]
+    plot_panel_shapes: [[3, 3], [3, 3], [3, 3]]

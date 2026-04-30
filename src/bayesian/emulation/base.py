@@ -39,8 +39,8 @@ class BaseEmulatorSettings:
 
     force_retrain: bool = attrs.field()
     _settings: dict[str, Any] = attrs.field()
-    # TODO(RJE): Does this really belong here? Not sure...
-    _observable_filter: data_IO.ObservableFilter | None = attrs.field(init=False)
+    # NOTE: It's possible that this filter doesn't really belong with this object (i.e. as a design issue). Consider removing...
+    _observable_filter: data_IO.ObservableFilter | None = attrs.field(init=False, default=None)
 
     @classmethod
     def from_emulator_settings(cls, emulator_settings: dict[str, Any]) -> BaseEmulatorSettings:
@@ -57,10 +57,12 @@ class BaseEmulatorSettings:
         # Observable filter
         self._observable_filter = None
         observable_list = self._settings.get("observable_list", [])
+        # Each entry may be a dict with an "observable" key (plus extra metadata), or a plain string
+        observable_include_list = [item["observable"] if isinstance(item, dict) else item for item in observable_list]
         observable_exclude_list = self._settings.get("observable_exclude_list", [])
-        if observable_list or observable_exclude_list:
+        if observable_include_list or observable_exclude_list:
             self._observable_filter = data_IO.ObservableFilter(
-                include_list=observable_list,
+                include_list=observable_include_list,
                 exclude_list=observable_exclude_list,
             )
         return self.observable_filter

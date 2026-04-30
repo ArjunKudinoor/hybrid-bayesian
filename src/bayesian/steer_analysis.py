@@ -137,13 +137,14 @@ class SteerAnalysis(common_base.CommonBase):
                         )
                         data_IO.write_dict_to_h5(
                             observables,
-                            os.path.join(self.output_dir, f"{analysis_name}_{parameterization}"),
+                            str(self.output_dir / f"{analysis_name}_{parameterization}"),
                             filename="observables.h5",
                         )
                         progress.update(initialization_task, advance=100, visible=False)
 
-                    output_dir = os.path.join(self.output_dir, f"{analysis_name}_{parameterization}")
-                    experimental_data = data_IO.data_array_from_h5(output_dir, "observables.h5")
+                    experimental_data = data_IO.data_array_from_h5(
+                        self.output_dir / f"{analysis_name}_{parameterization}", "observables.h5"
+                    )
 
                     if "external_covariance" in experimental_data:
                         ext_cov = experimental_data["external_covariance"]
@@ -191,12 +192,9 @@ class SteerAnalysis(common_base.CommonBase):
                         logger.info("------------------------------------------------------------------------")
                         logger.info(f"Fitting emulators for {analysis_name}_{parameterization}...")
                         emulation_config = emulation.EmulationConfig.from_config_file(
-                            analysis_name=analysis_name,
-                            parameterization=parameterization,
-                            analysis_config=analysis_config,
-                            config_file=self.config_file,
+                            analysis_settings=analysis_settings,
                         )
-                        emulation.fit_emulators(emulation_config)
+                        emulation.fit_emulators(emulation_config=emulation_config, analysis_settings=analysis_settings)
                         progress.update(emulation_task, advance=100, visible=False)
 
                     # Run MCMC

@@ -164,7 +164,7 @@ class MCConfig:
 
     @property
     def confidence(self) -> float:
-        return self.analysis_settings.raw_analysis_config.get("closure", {}).get("confidence", 0.9)
+        return float(self.analysis_settings.raw_analysis_config.get("closure", {}).get("confidence", 0.9))
 
 
 def run_mcmc(config: MCConfig) -> None:

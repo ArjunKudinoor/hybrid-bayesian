@@ -36,20 +36,27 @@ logger = logging.getLogger(__name__)
 _register_name = "sk_learn"
 
 
-def fit_emulator(config: SKLearnEmulatorSettings, analysis_settings: analysis.AnalysisSettings) -> dict[str, Any]:
+def fit_emulator(
+    emulator_settings: SKLearnEmulatorSettings, analysis_settings: analysis.AnalysisSettings
+) -> dict[str, Any]:
     """Do PCA and fit the emulator.
 
     The first config.n_pc principal components (PCs) are emulated by independent Gaussian processes (GPs)
     The emulators map design points to PCs; the output will need to be inverted from PCA space to physical space.
 
-    :param EmulationConfig config: we take an instance of EmulationConfig as an argument to keep track of config info.
+    Args:
+
+        config: we take an instance of (particular) EmulationConfig as an argument to keep track of config info.
+        analysis_settings: Analysis settings
     """
     # Setup
-    output_filename = emulation_base.IO.output_filename(emulator_settings=config, analysis_settings=analysis_settings)
+    output_filename = emulation_base.IO.output_filename(
+        emulator_settings=emulator_settings, analysis_settings=analysis_settings
+    )
 
     # Check if emulator already exists
     if output_filename.exists():
-        if config.force_retrain:
+        if emulator_settings.force_retrain:
             output_filename.unlink()
             logger.info(f"Removed {output_filename}")
         else:
@@ -63,7 +70,7 @@ def fit_emulator(config: SKLearnEmulatorSettings, analysis_settings: analysis.An
     Y = data_IO.predictions_matrix_from_h5(
         output_dir=analysis_settings.output_dir,
         filename=analysis_settings.io.observables_filename,
-        observable_filter=config.base_settings.observable_filter,
+        observable_filter=emulator_settings.base_settings.observable_filter,
     )
 
     # Use sklearn to:
@@ -100,7 +107,7 @@ def fit_emulator(config: SKLearnEmulatorSettings, analysis_settings: analysis.An
     scaler = sklearn_preprocessing.StandardScaler()
     # This adopts the sklearn convention, but then sets a max cap of 30 PCs (arbitrarily chosen) to
     # reduce computation time.
-    max_n_components = config.max_n_components_to_calculate
+    max_n_components = emulator_settings.max_n_components_to_calculate
     if max_n_components is not None:
         logger.info(f"Running with max n_pc={max_n_components}")
     # NOTE-STAT: Whiten=True, but here, Whiten=False.
@@ -110,13 +117,13 @@ def fit_emulator(config: SKLearnEmulatorSettings, analysis_settings: analysis.An
     )  # Include all PCs here, so we can access them later
     # Scale data and perform PCA
     Y_pca = pca.fit_transform(scaler.fit_transform(Y))
-    Y_pca_truncated = Y_pca[:, : config.n_pc]  # Select PCs here
+    Y_pca_truncated = Y_pca[:, : emulator_settings.n_pc]  # Select PCs here
     # Invert PCA and undo the scaling
-    Y_reconstructed_truncated = Y_pca_truncated.dot(pca.components_[: config.n_pc, :])
+    Y_reconstructed_truncated = Y_pca_truncated.dot(pca.components_[: emulator_settings.n_pc, :])
     Y_reconstructed_truncated_unscaled = scaler.inverse_transform(Y_reconstructed_truncated)
     explained_variance_ratio = pca.explained_variance_ratio_
     logger.info(
-        f"  Variance explained by first {config.n_pc} components: {np.sum(explained_variance_ratio[: config.n_pc])}"
+        f"  Variance explained by first {emulator_settings.n_pc} components: {np.sum(explained_variance_ratio[: emulator_settings.n_pc])}"
     )
 
     # Get design
@@ -129,7 +136,7 @@ def fit_emulator(config: SKLearnEmulatorSettings, analysis_settings: analysis.An
     max = np.array(analysis_settings.raw_analysis_config["parameterization"][analysis_settings.parameterization]["max"])
 
     kernel = None
-    for kernel_type, kernel_args in config.active_kernels.items():
+    for kernel_type, kernel_args in emulator_settings.active_kernels.items():
         if kernel_type == "matern":
             length_scale = max - min
             length_scale_bounds_factor = kernel_args["length_scale_bounds_factor"]
@@ -168,7 +175,10 @@ def fit_emulator(config: SKLearnEmulatorSettings, analysis_settings: analysis.An
     logger.info(f"  The design has {design.shape[1]} parameters")
     emulators = [
         sklearn_gaussian_process.GaussianProcessRegressor(
-            kernel=kernel, alpha=config.alpha, n_restarts_optimizer=config.n_restarts, copy_X_train=False
+            kernel=kernel,
+            alpha=emulator_settings.alpha,
+            n_restarts_optimizer=emulator_settings.n_restarts,
+            copy_X_train=False,
         ).fit(design, y)
         for y in Y_pca_truncated.T
     ]
