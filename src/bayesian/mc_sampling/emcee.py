@@ -54,6 +54,10 @@ def _run_using_emcee(
     #       (eg. used in learning the emulator group mapping doesn't work)
     # NOTE: We use `get_context` here to avoid having to globally specify the context. Plus, it then should be fine
     #       to repeated call this function. (`set_context` can only be called once - otherwise, it's a runtime error).
+    # Persist the static covariance pieces once on the master before any worker process
+    # is created, so workers don't race on covariance_matrices.pkl.
+    log_posterior.save_covariance_matrices_for_plotting(experimental_results, emulation_config.output_dir)
+
     ctx = multiprocessing.get_context("spawn")
     with ctx.Pool(
         initializer=log_posterior.initialize_pool_variables,
@@ -126,20 +130,20 @@ def _run_using_emcee(
             cleaned_results = {}
 
             # Copy essential arrays with proper dtypes
-            for key in ['y', 'y_err_stat']:
+            for key in ["y", "y_err_stat"]:
                 if key in experimental_results:
                     cleaned_results[key] = np.array(experimental_results[key], dtype=np.float64)
 
             # Handle systematic uncertainties
-            if 'y_err_syst' in experimental_results:
-                cleaned_results['y_err_syst'] = np.array(experimental_results['y_err_syst'], dtype=np.float64)
+            if "y_err_syst" in experimental_results:
+                cleaned_results["y_err_syst"] = np.array(experimental_results["y_err_syst"], dtype=np.float64)
 
             # Handle systematic names as clean strings
-            if 'systematic_names' in experimental_results:
-                cleaned_results['systematic_names'] = [str(name) for name in experimental_results['systematic_names']]
+            if "systematic_names" in experimental_results:
+                cleaned_results["systematic_names"] = [str(name) for name in experimental_results["systematic_names"]]
 
             # Copy other simple fields
-            for key in ['y_err']:  # Include any other simple fields you need
+            for key in ["y_err"]:  # Include any other simple fields you need
                 if key in experimental_results and key not in cleaned_results:
                     cleaned_results[key] = experimental_results[key]
 

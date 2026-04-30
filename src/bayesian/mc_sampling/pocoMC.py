@@ -78,6 +78,10 @@ def run_sampling(
     # NOTE: We use `get_context` here to avoid having to globally specify the context. Plus, it then should be fine
     #       to repeated call this function. (`set_context` can only be called once - otherwise, it's a runtime error).
     # NOTE: I create the pool here rather than using the built-in one because I need to initialize the log_posterior!
+    # Persist the static covariance pieces once on the master before any worker process
+    # is created, so workers don't race on covariance_matrices.pkl.
+    log_posterior.save_covariance_matrices_for_plotting(experimental_results, emulation_config.output_dir)
+
     ctx = multiprocessing.get_context("spawn")
     with ctx.Pool(
         initializer=log_posterior.initialize_pool_variables,

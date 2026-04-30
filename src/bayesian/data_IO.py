@@ -132,7 +132,6 @@ For covariance visualization, see plot_covariance.py
 
 from __future__ import annotations
 
-from bayesian.systematic_correlation import SystematicCorrelationManager
 import fnmatch
 import logging
 import os
@@ -146,6 +145,8 @@ import numpy as np
 import numpy.typing as npt
 from silx.io.dictdump import dicttoh5, h5todict
 
+from bayesian.systematic_correlation import SystematicCorrelationManager
+
 logger = logging.getLogger(__name__)
 
 
@@ -153,12 +154,13 @@ logger = logging.getLogger(__name__)
 # UTILITY FUNCTIONS
 ####################################################################################################################
 
+
 def _recursive_defaultdict():
-    '''
+    """
     Create a nested defaultdict
 
     :return recursive defaultdict
-    '''
+    """
     return defaultdict(_recursive_defaultdict)
 
 
@@ -184,14 +186,12 @@ def _validate_and_flatten_array(array: np.ndarray, name: str) -> np.ndarray:
         logger.debug(f"{name}: Converted from 2D {array.shape} to 1D {result.shape}")
         return result
 
-    raise ValueError(
-        f"{name}: Expected 1D array, got shape {array.shape}. "
-        f"Cannot automatically flatten."
-    )
+    raise ValueError(f"{name}: Expected 1D array, got shape {array.shape}. Cannot automatically flatten.")
 
 
-def _generate_pseudodata(prediction_data: np.ndarray, exp_uncertainty: np.ndarray,
-                         pseudodata_index: int, observable_label: str) -> np.ndarray:
+def _generate_pseudodata(
+    prediction_data: np.ndarray, exp_uncertainty: np.ndarray, pseudodata_index: int, observable_label: str
+) -> np.ndarray:
     """
     Generate pseudodata from validation predictions.
 
@@ -218,12 +218,11 @@ def _generate_pseudodata(prediction_data: np.ndarray, exp_uncertainty: np.ndarra
         )
 
     prediction_central_value = prediction_data[:, pseudodata_index]
-    pseudodata = prediction_central_value + np.random.normal(loc=0., scale=exp_uncertainty)
+    pseudodata = prediction_central_value + np.random.normal(loc=0.0, scale=exp_uncertainty)
 
     if pseudodata.ndim != 1:
         raise ValueError(
-            f"Generated pseudodata for {observable_label} has unexpected shape: {pseudodata.shape}. "
-            f"Expected 1D array."
+            f"Generated pseudodata for {observable_label} has unexpected shape: {pseudodata.shape}. Expected 1D array."
         )
 
     return pseudodata
@@ -232,6 +231,7 @@ def _generate_pseudodata(prediction_data: np.ndarray, exp_uncertainty: np.ndarra
 ####################################################################################################################
 # SYSTEMATIC UNCERTAINTY HELPER FUNCTIONS
 ####################################################################################################################
+
 
 def _parse_data_systematic_header(filepath):
     """
@@ -249,17 +249,17 @@ def _parse_data_systematic_header(filepath):
     systematic_columns = {}
 
     try:
-        with open(filepath, 'r') as f:
+        with open(filepath) as f:
             for line_num, line in enumerate(f):
-                if line.startswith('#') and any(col in line.lower() for col in ['label', 'xmin', 'xmax', 'y']):
-                    columns = line.strip('#').strip().split()
+                if line.startswith("#") and any(col in line.lower() for col in ["label", "xmin", "xmax", "y"]):
+                    columns = line.strip("#").strip().split()
 
                     data_col_index = 0
                     for col in columns:
-                        if col.lower() == 'label':
+                        if col.lower() == "label":
                             continue
 
-                        if col.startswith('sys_'):
+                        if col.startswith("sys_"):
                             systematic_columns[col] = data_col_index
 
                         data_col_index += 1
@@ -308,6 +308,7 @@ def _read_data_systematics(filepath, systematic_columns):
 
     return systematic_data
 
+
 def _read_theory_systematics(table_dir, model, observable_name, theory_systematics):
     """
     Read theory systematic uncertainty files for model predictions.
@@ -339,14 +340,14 @@ def _read_theory_systematics(table_dir, model, observable_name, theory_systemati
         >>> # Returns: {'scale': array(...), 'pdf': array(...)}
     """
     theory_syst_data = {}
-    prediction_dir = os.path.join(table_dir, 'Prediction')
-    base_filename = f'Prediction__{model}__{observable_name}'
+    prediction_dir = os.path.join(table_dir, "Prediction")
+    base_filename = f"Prediction__{model}__{observable_name}"
 
     if not theory_systematics:
         return theory_syst_data
 
     for sys_name in theory_systematics:
-        syst_filepath = os.path.join(prediction_dir, f'{base_filename}__systs_{sys_name}.dat')
+        syst_filepath = os.path.join(prediction_dir, f"{base_filename}__systs_{sys_name}.dat")
 
         if os.path.exists(syst_filepath):
             try:
@@ -365,6 +366,7 @@ def _read_theory_systematics(table_dir, model, observable_name, theory_systemati
         )
 
     return theory_syst_data
+
 
 def _read_external_covariance(filepath):
     """
@@ -405,6 +407,49 @@ def _read_external_covariance(filepath):
         return None
 
 
+def _read_external_stat_covariance(filepath, n_bins, obs_label):
+    """
+    Load per-observable external statistical covariance matrix.
+
+    Args:
+        filepath: Path to covariance matrix file
+        n_bins: Expected number of bins for this observable
+        obs_label: Observable label (for error messages)
+
+    Returns:
+        Covariance matrix of shape (n_bins, n_bins)
+
+    Raises:
+        ValueError: If file cannot be loaded or has wrong shape
+    """
+    try:
+        cov_matrix = np.loadtxt(filepath)
+    except Exception as e:
+        raise ValueError(f"Failed to load external_stat_cov for {obs_label} from {filepath}: {e}")
+
+    # Validate shape
+    if cov_matrix.shape != (n_bins, n_bins):
+        raise ValueError(
+            f"External stat covariance for {obs_label} has shape {cov_matrix.shape}, expected ({n_bins}, {n_bins})"
+        )
+
+    # Validate symmetry
+    if not np.allclose(cov_matrix, cov_matrix.T):
+        logger.warning(f"External stat covariance for {obs_label} is not symmetric. Symmetrizing.")
+        cov_matrix = 0.5 * (cov_matrix + cov_matrix.T)
+
+    # Validate positive semi-definite
+    eigvals = np.linalg.eigvalsh(cov_matrix)
+    if np.any(eigvals < -1e-10):
+        raise ValueError(
+            f"External stat covariance for {obs_label} is not positive semi-definite. "
+            f"Minimum eigenvalue: {eigvals.min()}"
+        )
+
+    logger.info(f"Loaded external statistical covariance for {obs_label} from {filepath}")
+    return cov_matrix
+
+
 def _sum_systematics_quadrature(systematics_dict):
     """
     Sum systematics in quadrature: σ_total = √(Σ σᵢ²).
@@ -437,6 +482,7 @@ def _sum_systematics_quadrature(systematics_dict):
     logger.debug(f"  Result: {len(summed)} bins, mean uncertainty = {np.mean(summed):.4f}")
 
     return summed
+
 
 def _filter_systematics_by_config(systematic_data, config_systematics):
     """
@@ -473,8 +519,8 @@ def _filter_systematics_by_config(systematic_data, config_systematics):
 
     for sys_full_name in config_systematics:
         # Extract base name from full name (remove correlation tag)
-        if ':' in sys_full_name:
-            base_sys_name, _ = sys_full_name.split(':', 1)
+        if ":" in sys_full_name:
+            base_sys_name, _ = sys_full_name.split(":", 1)
             logger.debug(f"Mapping config '{sys_full_name}' → base name '{base_sys_name}'")
         else:
             base_sys_name = sys_full_name
@@ -485,9 +531,9 @@ def _filter_systematics_by_config(systematic_data, config_systematics):
         if base_sys_name in systematic_data:
             filtered_systematics[base_sys_name] = systematic_data[base_sys_name]
             logger.debug(f"  Found '{base_sys_name}' in data")
-        elif f'sys_{base_sys_name}' in systematic_data:
+        elif f"sys_{base_sys_name}" in systematic_data:
             # Handle sys_ prefix if present in data file
-            filtered_systematics[base_sys_name] = systematic_data[f'sys_{base_sys_name}']
+            filtered_systematics[base_sys_name] = systematic_data[f"sys_{base_sys_name}"]
             logger.debug(f"  Found 'sys_{base_sys_name}' in data, mapped to '{base_sys_name}'")
         else:
             logger.warning(
@@ -498,6 +544,7 @@ def _filter_systematics_by_config(systematic_data, config_systematics):
     logger.debug(f"Filtered {len(filtered_systematics)}/{len(config_systematics)} systematics from config")
 
     return filtered_systematics
+
 
 def _parse_config_observables(analysis_config, correlation_groups=None):
     """
@@ -510,7 +557,7 @@ def _parse_config_observables(analysis_config, correlation_groups=None):
     correlation_manager = SystematicCorrelationManager()
 
     # Check for external covariance file
-    external_cov_file = analysis_config.get('external_covariance_file', None)
+    external_cov_file = analysis_config.get("external_covariance_file", None)
 
     if external_cov_file:
         logger.info(f"External covariance mode enabled: {external_cov_file}")
@@ -521,19 +568,24 @@ def _parse_config_observables(analysis_config, correlation_groups=None):
 
     try:
         for emulation_group_settings in analysis_config["parameters"]["emulators"].values():
-            observable_config_list = emulation_group_settings.get('observable_list', [])
+            observable_config_list = emulation_group_settings.get("observable_list", [])
 
             for obs_config in observable_config_list:
                 if isinstance(obs_config, str):
                     # Old format: just observable name - no systematics
                     parsed_observables.append((obs_config, [], []))
-                elif isinstance(obs_config, dict) and 'observable' in obs_config:
+                elif isinstance(obs_config, dict) and "observable" in obs_config:
                     # New format with correlation tags
-                    obs_name = obs_config['observable']
+                    obs_name = obs_config["observable"]
                     # Ignore sys_data if external covariance is used
-                    sys_data = [] if external_cov_file else obs_config.get('sys_data', [])
-                    sys_theory = obs_config.get('sys_theory', [])
-                    parsed_observables.append((obs_name, sys_data, sys_theory))
+                    sys_data = [] if external_cov_file else obs_config.get("sys_data", [])
+                    sys_theory = obs_config.get("sys_theory", [])
+
+                    # Extract per-observable external stat cov (if specified)
+                    external_stat_cov = obs_config.get("external_stat_cov", None)
+
+                    # Append with external_stat_cov info
+                    parsed_observables.append((obs_name, sys_data, sys_theory, external_stat_cov))
                 else:
                     logger.warning(f"Unrecognized observable config format: {obs_config}")
 
@@ -553,22 +605,23 @@ def _parse_config_observables(analysis_config, correlation_groups=None):
         else:
             logger.warning("No correlation_groups provided (using default full correlation)")
 
-        logger.info(f"Created correlation manager with {len(correlation_manager.get_all_systematic_names())} systematics")
+        logger.info(
+            f"Created correlation manager with {len(correlation_manager.get_all_systematic_names())} systematics"
+        )
     else:
         logger.info("Skipping systematic correlation parsing (external covariance mode)")
 
     # Return BOTH the parsed observables list, correlation manager, AND external_cov_file
     return parsed_observables, correlation_manager, external_cov_file
 
+
 ####################################################################################################################
 # DATA LOADING FUNCTIONS - CORE INTERFACE
 ####################################################################################################################
 
+
 def data_array_from_h5(
-    output_dir: str | Path,
-    filename: str,
-    pseudodata_index: int = -1,
-    observable_filter: ObservableFilter | None = None
+    output_dir: str | Path, filename: str, pseudodata_index: int = -1, observable_filter: ObservableFilter | None = None
 ) -> dict[str, Any]:
     """
     Load experimental data array from observables.h5 with systematic correlation support.
@@ -589,15 +642,16 @@ def data_array_from_h5(
     observables = read_dict_from_h5(output_dir, filename, verbose=False)
 
     # Route to appropriate handler based on available data
-    external_cov = observables.get('external_covariance', None)
+    external_cov = observables.get("external_covariance", None)
     if external_cov is not None:
         logger.info("External covariance mode: building data without systematics")
         return _data_array_from_h5_external_cov(observables, external_cov, pseudodata_index, observable_filter)
 
-    correlation_manager_data = observables.get('correlation_manager', None)
+    correlation_manager_data = observables.get("correlation_manager", None)
     if correlation_manager_data is not None:
         try:
             from systematic_correlation import SystematicCorrelationManager
+
             correlation_manager = SystematicCorrelationManager.from_dict(correlation_manager_data)
             logger.info("Using correlation-aware systematic handling")
             return _data_array_from_h5_with_correlations(
@@ -613,9 +667,9 @@ def data_array_from_h5(
 # DATA LOADING FUNCTIONS - MODE-SPECIFIC IMPLEMENTATIONS
 ####################################################################################################################
 
-def _data_array_from_h5_nosys(output_dir, filename, pseudodata_index: int = -1,
-                              observable_filter=None):
-    '''
+
+def _data_array_from_h5_nosys(output_dir, filename, pseudodata_index: int = -1, observable_filter=None):
+    """
     Load data array without systematic correlations (Fallback mode).
 
     Args:
@@ -626,42 +680,40 @@ def _data_array_from_h5_nosys(output_dir, filename, pseudodata_index: int = -1,
 
     Returns:
         Dict with basic data structure
-    '''
+    """
     observables = read_dict_from_h5(output_dir, filename, verbose=False)
     sorted_observable_list = sorted_observable_list_from_dict(observables, observable_filter=observable_filter)
 
     if pseudodata_index < 0:
-        data_dict = observables['Data']
+        data_dict = observables["Data"]
     else:
-        data_dict = observables['Prediction_validation']
-        exp_data_dict = observables['Data']
+        data_dict = observables["Prediction_validation"]
+        exp_data_dict = observables["Data"]
 
         for observable_label in sorted_observable_list:
-            exp_uncertainty = exp_data_dict[observable_label]['y_err_stat']
-            prediction_data = data_dict[observable_label]['y']
+            exp_uncertainty = exp_data_dict[observable_label]["y_err_stat"]
+            prediction_data = data_dict[observable_label]["y"]
 
-            pseudodata = _generate_pseudodata(prediction_data, exp_uncertainty,
-                                             pseudodata_index, observable_label)
+            pseudodata = _generate_pseudodata(prediction_data, exp_uncertainty, pseudodata_index, observable_label)
 
-            data_dict[observable_label]['y'] = pseudodata
-            data_dict[observable_label]['y_err_stat'] = exp_uncertainty
+            data_dict[observable_label]["y"] = pseudodata
+            data_dict[observable_label]["y_err_stat"] = exp_uncertainty
 
-    data = {'y': [], 'y_err_stat': []}
+    data = {"y": [], "y_err_stat": []}
 
     for observable_label in sorted_observable_list:
-        data['y'].extend(data_dict[observable_label]['y'])
-        data['y_err_stat'].extend(data_dict[observable_label]['y_err_stat'])
+        data["y"].extend(data_dict[observable_label]["y"])
+        data["y_err_stat"].extend(data_dict[observable_label]["y_err_stat"])
 
-    data['y'] = np.array(data['y'])
-    data['y_err_stat'] = np.array(data['y_err_stat'])
+    data["y"] = np.array(data["y"])
+    data["y_err_stat"] = np.array(data["y_err_stat"])
 
-    logger.info(f'Data loading complete (no systematics): {data["y"].shape[0]} features')
+    logger.info(f"Data loading complete (no systematics): {data['y'].shape[0]} features")
 
     return data
 
 
-def _data_array_from_h5_external_cov(observables, external_cov, pseudodata_index,
-                                     observable_filter):
+def _data_array_from_h5_external_cov(observables, external_cov, pseudodata_index, observable_filter):
     """
     Load data array using external covariance matrix (Expert mode).
 
@@ -678,73 +730,66 @@ def _data_array_from_h5_external_cov(observables, external_cov, pseudodata_index
 
     if not sorted_observable_list:
         logger.warning("No observables passed the filter.")
-        return {
-            'y': np.array([]),
-            'y_err_stat': np.array([]),
-            'external_covariance': external_cov
-        }
+        return {"y": np.array([]), "y_err_stat": np.array([]), "external_covariance": external_cov}
 
     if pseudodata_index < 0:
-        data_dict = observables['Data']
+        data_dict = observables["Data"]
         logger.info("Loading experimental data (external covariance mode)")
     else:
         logger.info(f"Generating pseudodata from validation design point {pseudodata_index}")
-        data_dict = observables['Prediction_validation']
-        exp_data_dict = observables['Data']
+        data_dict = observables["Prediction_validation"]
+        exp_data_dict = observables["Data"]
 
         for observable_label in sorted_observable_list:
-            exp_uncertainty = exp_data_dict[observable_label]['y_err_stat']
-            prediction_data = data_dict[observable_label]['y']
+            exp_uncertainty = exp_data_dict[observable_label]["y_err_stat"]
+            prediction_data = data_dict[observable_label]["y"]
 
-            pseudodata = _generate_pseudodata(prediction_data, exp_uncertainty,
-                                             pseudodata_index, observable_label)
+            pseudodata = _generate_pseudodata(prediction_data, exp_uncertainty, pseudodata_index, observable_label)
 
-            data_dict[observable_label]['y'] = pseudodata
-            data_dict[observable_label]['y_err_stat'] = exp_uncertainty
+            data_dict[observable_label]["y"] = pseudodata
+            data_dict[observable_label]["y_err_stat"] = exp_uncertainty
 
     data = {
-        'y': [],
-        'y_err_stat': [],
-        'y_err_syst': np.array([]).reshape(0, 0),
-        'systematic_names': [],
-        'observable_ranges': [],
-        'external_covariance': external_cov
+        "y": [],
+        "y_err_stat": [],
+        "y_err_syst": np.array([]).reshape(0, 0),
+        "systematic_names": [],
+        "observable_ranges": [],
+        "external_covariance": external_cov,
     }
 
     current_feature_index = 0
 
     for observable_label in sorted_observable_list:
-        y_values = data_dict[observable_label]['y']
+        y_values = data_dict[observable_label]["y"]
         n_bins = len(y_values)
 
         start_idx = current_feature_index
         end_idx = current_feature_index + n_bins
-        data['observable_ranges'].append((start_idx, end_idx, observable_label))
+        data["observable_ranges"].append((start_idx, end_idx, observable_label))
 
-        data['y'].extend(y_values)
-        data['y_err_stat'].extend([0.0] * n_bins)
+        data["y"].extend(y_values)
+        data["y_err_stat"].extend([0.0] * n_bins)
 
         current_feature_index = end_idx
 
-    data['y'] = np.array(data['y'])
-    data['y_err_stat'] = np.array(data['y_err_stat'])
+    data["y"] = np.array(data["y"])
+    data["y_err_stat"] = np.array(data["y_err_stat"])
 
-    n_features = len(data['y'])
+    n_features = len(data["y"])
     if external_cov.shape != (n_features, n_features):
         raise ValueError(
-            f"External covariance shape {external_cov.shape} doesn't match "
-            f"n_features={n_features} from observables"
+            f"External covariance shape {external_cov.shape} doesn't match n_features={n_features} from observables"
         )
 
-    logger.info(f"Data loading complete (external covariance mode):")
+    logger.info("Data loading complete (external covariance mode):")
     logger.info(f"  Features: {n_features}")
     logger.info(f"  Observables: {len(data['observable_ranges'])}")
 
     return data
 
 
-def _data_array_from_h5_with_correlations(observables, correlation_manager,
-                                          pseudodata_index, observable_filter):
+def _data_array_from_h5_with_correlations(observables, correlation_manager, pseudodata_index, observable_filter):
     """
     Load data array with systematic correlation support (Legacy or Advanced mode).
 
@@ -761,71 +806,70 @@ def _data_array_from_h5_with_correlations(observables, correlation_manager,
 
     if not sorted_observable_list:
         logger.warning("No observables passed the filter.")
-        return {
-            'y': np.array([]),
-            'y_err_stat': np.array([]),
-            'y_err_syst': np.array([]).reshape(0, 0)
-        }
+        return {"y": np.array([]), "y_err_stat": np.array([]), "y_err_syst": np.array([]).reshape(0, 0)}
 
     if pseudodata_index < 0:
-        data_dict = observables['Data']
+        data_dict = observables["Data"]
     else:
-        data_dict = observables['Prediction_validation']
-        exp_data_dict = observables['Data']
+        data_dict = observables["Prediction_validation"]
+        exp_data_dict = observables["Data"]
 
         for observable_label in sorted_observable_list:
-            exp_uncertainty = exp_data_dict[observable_label]['y_err_stat']
-            prediction_data = data_dict[observable_label]['y']
+            exp_uncertainty = exp_data_dict[observable_label]["y_err_stat"]
+            prediction_data = data_dict[observable_label]["y"]
 
-            pseudodata = _generate_pseudodata(prediction_data, exp_uncertainty,
-                                             pseudodata_index, observable_label)
+            pseudodata = _generate_pseudodata(prediction_data, exp_uncertainty, pseudodata_index, observable_label)
 
-            data_dict[observable_label]['y'] = pseudodata
-            data_dict[observable_label]['y_err_stat'] = exp_uncertainty
-            data_dict[observable_label]['systematics'] = exp_data_dict[observable_label]['systematics']
+            data_dict[observable_label]["y"] = pseudodata
+            data_dict[observable_label]["y_err_stat"] = exp_uncertainty
+            data_dict[observable_label]["systematics"] = exp_data_dict[observable_label]["systematics"]
+
+            if "external_stat_cov_matrix" in exp_data_dict[observable_label]:
+                data_dict[observable_label]["external_stat_cov_matrix"] = exp_data_dict[observable_label][
+                    "external_stat_cov_matrix"
+                ]
 
     all_systematic_names = correlation_manager.get_all_systematic_names()
 
     data = {
-        'y': [],
-        'y_err_stat': [],
-        'y_err_syst': None,
-        'systematic_names': all_systematic_names,
-        'observable_ranges': [],
-        'correlation_manager': correlation_manager
+        "y": [],
+        "y_err_stat": [],
+        "y_err_syst": None,
+        "systematic_names": all_systematic_names,
+        "observable_ranges": [],
+        "correlation_manager": correlation_manager,
     }
 
     current_feature_index = 0
     systematic_uncertainty_list = []
 
     for observable_label in sorted_observable_list:
-        y_values = _validate_and_flatten_array(data_dict[observable_label]['y'], observable_label)
+        y_values = _validate_and_flatten_array(data_dict[observable_label]["y"], observable_label)
         y_err_stat_values = _validate_and_flatten_array(
-            data_dict[observable_label]['y_err_stat'],
-            f"{observable_label}_stat"
+            data_dict[observable_label]["y_err_stat"], f"{observable_label}_stat"
         )
 
         n_bins = len(y_values)
         start_idx = current_feature_index
         end_idx = current_feature_index + n_bins
-        data['observable_ranges'].append((start_idx, end_idx, observable_label))
+        data["observable_ranges"].append((start_idx, end_idx, observable_label))
 
-        data['y'].extend(y_values)
-        data['y_err_stat'].extend(y_err_stat_values)
+        data["y"].extend(y_values)
+        data["y_err_stat"].extend(y_err_stat_values)
 
-        obs_systematics = data_dict[observable_label].get('systematics', {})
+        obs_systematics = data_dict[observable_label].get("systematics", {})
         expected_systematics = correlation_manager.get_systematic_names_for_observable(observable_label)
 
         obs_syst_matrix = np.zeros((n_bins, len(all_systematic_names)))
 
         for sys_full_name in expected_systematics:
-            if ':' in sys_full_name:
-                base_sys_name, _ = sys_full_name.split(':', 1)
+            if ":" in sys_full_name:
+                base_sys_name, _ = sys_full_name.split(":", 1)
             else:
                 base_sys_name = sys_full_name
 
-            if base_sys_name.startswith('sum_'):
-                base_sys_name = 'sum'
+            if base_sys_name.startswith("sum_"):
+                base_sys_name = "sum"
 
             if sys_full_name in all_systematic_names:
                 sys_idx = all_systematic_names.index(sys_full_name)
@@ -841,23 +885,39 @@ def _data_array_from_h5_with_correlations(observables, correlation_manager,
         systematic_uncertainty_list.append(obs_syst_matrix)
         current_feature_index = end_idx
 
-    data['y'] = np.array(data['y'])
-    data['y_err_stat'] = np.array(data['y_err_stat'])
+    data["y"] = np.array(data["y"])
+    data["y_err_stat"] = np.array(data["y_err_stat"])
 
     if systematic_uncertainty_list:
         try:
-            data['y_err_syst'] = np.vstack(systematic_uncertainty_list)
+            data["y_err_syst"] = np.vstack(systematic_uncertainty_list)
         except ValueError as e:
             for i, mat in enumerate(systematic_uncertainty_list):
                 logger.error(f"  Matrix {i}: {mat.shape}")
             raise ValueError(f"Shape mismatch in systematic uncertainty stacking: {e}")
     else:
-        data['y_err_syst'] = np.array([]).reshape(len(data['y']), 0)
+        data["y_err_syst"] = np.array([]).reshape(len(data["y"]), 0)
 
-    correlation_manager.register_observable_ranges(data['observable_ranges'])
-    correlation_manager.resolve_bin_counts(data['observable_ranges'])
+    # Collect per-observable external stat covariances
+    data["per_observable_external_stat_cov"] = {}
+    for observable_label in sorted_observable_list:
+        ext_cov = data_dict[observable_label].get("external_stat_cov_matrix", None)
+        if ext_cov is not None:
+            # Find observable ranges
+            for start, end, obs_name in data["observable_ranges"]:
+                if obs_name == observable_label:
+                    data["per_observable_external_stat_cov"][observable_label] = {
+                        "matrix": ext_cov,
+                        "start": start,
+                        "end": end,
+                    }
+                    logger.info(f"Stored external stat cov for {observable_label} (bins {start}-{end})")
+                    break
 
-    logger.info(f"Data loading complete:")
+    correlation_manager.register_observable_ranges(data["observable_ranges"])
+    correlation_manager.resolve_bin_counts(data["observable_ranges"])
+
+    logger.info("Data loading complete:")
     logger.info(f"  Features: {data['y'].shape[0]}")
     logger.info(f"  Systematic uncertainties: {data['y_err_syst'].shape[1]} sources")
     logger.info(f"  Observables: {len(data['observable_ranges'])}")
@@ -878,7 +938,7 @@ def initialize_observables_dict_from_tables(
     table_dir: str | Path,
     analysis_config: dict[str, Any],
     parameterization: str,
-    correlation_groups: dict[str, str] | None = None
+    correlation_groups: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
     Initialize observables dictionary from .dat files with systematic uncertainty support.
@@ -964,7 +1024,7 @@ def initialize_observables_dict_from_tables(
     - Systematic uncertainties are stored as separate columns, not combined into total uncertainty
     - Empty systematics dict maintained for observables without systematic uncertainties (backward compatibility)
     """
-    logger.info('Including the following observables:')
+    logger.info("Including the following observables:")
 
     # We will construct a dict containing all observables
     observables = _recursive_defaultdict()
@@ -975,60 +1035,87 @@ def initialize_observables_dict_from_tables(
 
     # ----------------------
     # Read experimental data
-    data_dir = os.path.join(table_dir, 'Data')
+    data_dir = os.path.join(table_dir, "Data")
 
     parsed_observables, correlation_manager, external_cov_file = _parse_config_observables(
-                                            analysis_config,
-                                            correlation_groups=correlation_groups
+        analysis_config, correlation_groups=correlation_groups
     )
 
+    # Build config map including external_stat_cov
     systematic_config_map = {}
-    for obs_name, sys_data_list, sys_theory_list in parsed_observables:
-        systematic_config_map[obs_name] = (sys_data_list, sys_theory_list)
+    for obs_name, sys_data_list, sys_theory_list, external_stat_cov in parsed_observables:
+        systematic_config_map[obs_name] = (sys_data_list, sys_theory_list, external_stat_cov)
 
     if external_cov_file:
         external_cov_path = os.path.join(table_dir, external_cov_file)
         external_cov = _read_external_covariance(external_cov_path)
 
         if external_cov is not None:
-            observables['external_covariance'] = external_cov
+            observables["external_covariance"] = external_cov
             logger.info(f"Loaded external covariance: shape {external_cov.shape}")
         else:
             raise ValueError(f"Failed to load external covariance from {external_cov_path}")
 
     if correlation_manager.get_all_systematic_names():
-
-        logger.info(f"Adding correlation manager with {len(correlation_manager.get_all_systematic_names())} systematics")
-        observables['correlation_manager'] = correlation_manager.to_dict()
+        logger.info(
+            f"Adding correlation manager with {len(correlation_manager.get_all_systematic_names())} systematics"
+        )
+        observables["correlation_manager"] = correlation_manager.to_dict()
     else:
         logger.info("No systematic correlations found in config")
 
     for filename in os.listdir(data_dir):
         # Skip files that don't match the expected Data file pattern
-        if not filename.startswith('Data__'):
+        if not filename.startswith("Data__"):
             logger.debug(f"Skipping non-data file in Data directory: {filename}")
             continue
 
         if _accept_observable(analysis_config, filename):
-
             # ORIGINAL: Read standard data
             data = np.loadtxt(os.path.join(data_dir, filename), ndmin=2)
             data_entry = {}
-            data_entry['xmin'] = data[:,0]
-            data_entry['xmax'] = data[:,1]
-            data_entry['y'] = data[:,2]
-            data_entry['y_err_stat'] = data[:,3]
+            data_entry["xmin"] = data[:, 0]
+            data_entry["xmax"] = data[:, 1]
+            data_entry["y"] = data[:, 2]
+            data_entry["y_err_stat"] = data[:, 3]
 
             observable_label, _ = _filename_to_labels(filename)
 
-            sys_data_list, _ = systematic_config_map.get(observable_label, ([], []))
+            sys_data_list, sys_theory_list, external_stat_cov_file = systematic_config_map.get(
+                observable_label, ([], [], None)
+            )
+
+            # Check if this observable has per-observable external stat cov
+            external_stat_cov_matrix = None
+            if external_stat_cov_file is not None and external_cov_file is None:
+                # Only load if global external cov is NOT set
+                n_bins = len(data_entry["y"])
+
+                # Construct full path (resolve relative to table_dir)
+                if not os.path.isabs(external_stat_cov_file):
+                    external_stat_cov_full_path = os.path.join(table_dir, external_stat_cov_file)
+                else:
+                    external_stat_cov_full_path = external_stat_cov_file
+
+                try:
+                    external_stat_cov_matrix = _read_external_stat_covariance(
+                        external_stat_cov_full_path, n_bins, observable_label
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to load external_stat_cov for {observable_label}: {e}")
+                    external_stat_cov_matrix = None
+
+            # Store in data_entry
+            data_entry["external_stat_cov_file"] = external_stat_cov_file
+            data_entry["external_stat_cov_matrix"] = external_stat_cov_matrix
+
             if sys_data_list:
                 systematic_columns = _parse_data_systematic_header(os.path.join(data_dir, filename))
                 systematic_data = _read_data_systematics(os.path.join(data_dir, filename), systematic_columns)
 
                 # Handle 'sum' configurations - check if this observable wants summed systematics
                 for sys_config in sys_data_list:
-                    if sys_config.startswith('sum'):
+                    if sys_config.startswith("sum"):
                         # This observable wants summed systematics
                         logger.info(f"Observable '{observable_label}' requests summed systematics")
 
@@ -1037,8 +1124,10 @@ def initialize_observables_dict_from_tables(
                             summed_sys = _sum_systematics_quadrature(systematic_data)
 
                             # Replace individual systematics with single summed one
-                            logger.info(f"  Replaced {len(systematic_data)} individual systematics with 1 summed systematic")
-                            systematic_data = {'sum': summed_sys}
+                            logger.info(
+                                f"  Replaced {len(systematic_data)} individual systematics with 1 summed systematic"
+                            )
+                            systematic_data = {"sum": summed_sys}
                         else:
                             logger.warning(f"  No systematic columns found to sum for '{observable_label}'")
                             # Create empty sum systematic to maintain structure
@@ -1048,15 +1137,15 @@ def initialize_observables_dict_from_tables(
                         break
 
                 filtered_systematics = _filter_systematics_by_config(systematic_data, sys_data_list)
-                data_entry['systematics'] = filtered_systematics
+                data_entry["systematics"] = filtered_systematics
             else:
-                data_entry['systematics'] = {}
+                data_entry["systematics"] = {}
 
-            observables['Data'][observable_label] = data_entry
+            observables["Data"][observable_label] = data_entry
 
             # ORIGINAL: Validation check
-            if 0 in data_entry['y']:
-                msg = f'{filename} has value=0'
+            if 0 in data_entry["y"]:
+                msg = f"{filename} has value=0"
                 raise ValueError(msg)
 
     # ----------------------
@@ -1116,7 +1205,7 @@ def initialize_observables_dict_from_tables(
 
                 # Apply cuts to the prediction values and errors (as well as data dict)
                 # We do this by construct a mask of bins (rows) to keep
-                cuts = analysis_config.get('cuts', {})
+                cuts = analysis_config.get("cuts", {})
                 for obs_key, cut_range in cuts.items():
                     if obs_key in observable_label:
                         x_min, x_max = cut_range
@@ -1126,9 +1215,11 @@ def initialize_observables_dict_from_tables(
                         prediction_values = prediction_values[mask, :]
                         prediction_errors = prediction_errors[mask, :]
                         for key in observables["Data"][observable_label].keys():
-                            observables["Data"][observable_label][key] = observables["Data"][observable_label][key][
-                                mask
-                            ]
+                            # Can only mask if we're working with a np array
+                            if isinstance(observables["Data"][observable_label], np.ndarray):
+                                observables["Data"][observable_label][key] = observables["Data"][observable_label][key][
+                                    mask
+                                ]
 
                 # Check that data and prediction have the same size
                 data_size = observables["Data"][observable_label]["y"].shape[0]
@@ -1148,8 +1239,8 @@ def initialize_observables_dict_from_tables(
                     design_points_to_exclude=design_points_to_exclude,
                 )
 
-                _, sys_theory_list = systematic_config_map.get(observable_label, ([], []))
-                model_name = analysis_config.get('model_name', 'exponential')
+                _, sys_theory_list, _ = systematic_config_map.get(observable_label, ([], [], None))
+                model_name = analysis_config.get("model_name", "exponential")
                 theory_systematics = _read_theory_systematics(table_dir, model_name, observable_label, sys_theory_list)
                 filtered_theory_systematics = _filter_systematics_by_config(theory_systematics, sys_theory_list)
 
@@ -1157,27 +1248,33 @@ def initialize_observables_dict_from_tables(
                     for obs_key, cut_range in cuts.items():
                         if obs_key in observable_label:
                             x_min, x_max = cut_range
-                            mask = (x_min <= observables['Data'][observable_label]['xmin']) & (observables['Data'][observable_label]['xmax'] <= x_max)
+                            mask = (x_min <= observables["Data"][observable_label]["xmin"]) & (
+                                observables["Data"][observable_label]["xmax"] <= x_max
+                            )
                             for sys_name, sys_data in filtered_theory_systematics.items():
                                 filtered_theory_systematics[sys_name] = sys_data[mask, :]
 
                 # MODIFIED: Store predictions with systematic support
-                observables['Prediction'][observable_label] = {
-                    'xmin': observables['Data'][observable_label]['xmin'],
-                    'xmax': observables['Data'][observable_label]['xmax'],
-                    'y': np.take(prediction_values, training_indices, axis=1),
-                    'y_err_stat': np.take(prediction_errors, training_indices, axis=1),
-                    'systematics': {sys_name: np.take(sys_data, training_indices, axis=1)
-                                   for sys_name, sys_data in filtered_theory_systematics.items()}
+                observables["Prediction"][observable_label] = {
+                    "xmin": observables["Data"][observable_label]["xmin"],
+                    "xmax": observables["Data"][observable_label]["xmax"],
+                    "y": np.take(prediction_values, training_indices, axis=1),
+                    "y_err_stat": np.take(prediction_errors, training_indices, axis=1),
+                    "systematics": {
+                        sys_name: np.take(sys_data, training_indices, axis=1)
+                        for sys_name, sys_data in filtered_theory_systematics.items()
+                    },
                 }
 
-                observables['Prediction_validation'][observable_label] = {
-                    'xmin': observables['Data'][observable_label]['xmin'],
-                    'xmax': observables['Data'][observable_label]['xmax'],
-                    'y': np.take(prediction_values, validation_indices, axis=1),
-                    'y_err_stat': np.take(prediction_errors, validation_indices, axis=1),
-                    'systematics': {sys_name: np.take(sys_data, validation_indices, axis=1)
-                                   for sys_name, sys_data in filtered_theory_systematics.items()}
+                observables["Prediction_validation"][observable_label] = {
+                    "xmin": observables["Data"][observable_label]["xmin"],
+                    "xmax": observables["Data"][observable_label]["xmax"],
+                    "y": np.take(prediction_values, validation_indices, axis=1),
+                    "y_err_stat": np.take(prediction_errors, validation_indices, axis=1),
+                    "systematics": {
+                        sys_name: np.take(sys_data, validation_indices, axis=1)
+                        for sys_name, sys_data in filtered_theory_systematics.items()
+                    },
                 }
 
                 # TODO: Do something about bins that have value=0?
@@ -1195,7 +1292,7 @@ def initialize_observables_dict_from_tables(
                         f"  Note: Removing {observable_label} from observables dict because no bins left after cuts"
                     )
 
-    #----------------------
+    # ----------------------
     # Print observables that we will use
     # NOTE: We don't need to pass the observable filter because we already filtered the observables via `_accept_observables`
     [logger.info(f"Accepted observable  {s}") for s in sorted_observable_list_from_dict(observables["Prediction"])]  # type: ignore[func-returns-value]
@@ -1206,6 +1303,7 @@ def initialize_observables_dict_from_tables(
 ####################################################################################################################
 # HDF5 I/O
 ####################################################################################################################
+
 
 def write_dict_to_h5(results, output_dir, filename, verbose=True):
     """
@@ -1252,7 +1350,10 @@ def read_dict_from_h5(input_dir: Path, filename: str, verbose: bool = True) -> d
 # MATRIX OPERATIONS
 ####################################################################################################################
 
-def predictions_matrix_from_h5(output_dir, filename, validation_set=False, observable_filter: ObservableFilter | None = None):
+
+def predictions_matrix_from_h5(
+    output_dir, filename, validation_set=False, observable_filter: ObservableFilter | None = None
+):
     """
     Initialize predictions from observables.h5 file into a single 2D array:
 
@@ -1330,10 +1431,10 @@ def data_dict_from_h5(output_dir, filename, observable_table_dir=None):
         for observable_label in observables["Data"].keys():
             data_table_filename = f"Data__{observable_label}.dat"
             data_table = np.loadtxt(os.path.join(data_table_dir, data_table_filename), ndmin=2)
-            assert np.allclose(data[observable_label]['xmin'], data_table[:,0])
-            assert np.allclose(data[observable_label]['xmax'], data_table[:,1])
-            assert np.allclose(data[observable_label]['y'], data_table[:,2])
-            assert np.allclose(data[observable_label]['y_err_stat'] , data_table[:,3])
+            assert np.allclose(data[observable_label]["xmin"], data_table[:, 0])
+            assert np.allclose(data[observable_label]["xmax"], data_table[:, 1])
+            assert np.allclose(data[observable_label]["y"], data_table[:, 2])
+            assert np.allclose(data[observable_label]["y_err_stat"], data_table[:, 3])
 
     return data
 
@@ -1453,6 +1554,7 @@ def observable_matrix_from_dict(
 # UTILITIES
 ####################################################################################################################
 
+
 def observable_label_to_keys(observable_label):
     """
     Parse filename into individual keys
@@ -1472,6 +1574,7 @@ def observable_label_to_keys(observable_label):
     centrality = observable_keys[5]
     return sqrts, system, observable_type, observable, subobserable, centrality
 
+
 def sorted_observable_list_from_dict(observables, observable_filter: ObservableFilter | None = None):
     """
     Define a sorted list of observable_labels from the keys of the observables dict, to keep well-defined ordering in matrix
@@ -1485,7 +1588,7 @@ def sorted_observable_list_from_dict(observables, observable_filter: ObservableF
         observable_keys = list(observables["Prediction"].keys())
 
     # The correlation manager and other metadata should not be treated as observables
-    special_keys = ['correlation_manager', 'Design', 'Design_validation', 'Prediction', 'Prediction_validation', 'Data']
+    special_keys = ["correlation_manager", "Design", "Design_validation", "Prediction", "Prediction_validation", "Data"]
     observable_keys = [k for k in observable_keys if k not in special_keys]
 
     if observable_filter is not None:
@@ -1494,6 +1597,7 @@ def sorted_observable_list_from_dict(observables, observable_filter: ObservableF
 
     # Sort observables, to keep well-defined ordering in matrix
     return _sort_observable_labels(observable_keys)
+
 
 def _sort_observable_labels(unordered_observable_labels):
     """
@@ -1518,6 +1622,7 @@ def _sort_observable_labels(unordered_observable_labels):
     sorted_observable_labels = ["__".join(x) for x in sorted_observable_label_tuples]
 
     return sorted_observable_labels
+
 
 def _filename_to_labels(filename):
     """
@@ -1600,6 +1705,7 @@ class ObservableFilter:
 
         return found_observable
 
+
 def _accept_observable(analysis_config, filename):
     """
     Check if observable should be included in the analysis.
@@ -1629,7 +1735,7 @@ def _accept_observable(analysis_config, filename):
         centrality_ranges = [list(centrality_ranges)]
 
     accepted_centrality = False
-    for (selected_cent_min, selected_cent_max) in centrality_ranges:
+    for selected_cent_min, selected_cent_max in centrality_ranges:
         if float(centrality_min) >= selected_cent_min:
             if float(centrality_max) <= selected_cent_max:
                 accepted_centrality = True
@@ -1647,18 +1753,17 @@ def _accept_observable(analysis_config, filename):
     global_observable_exclude_list = analysis_config.get("global_observable_exclude_list", [])
 
     for emulation_group_settings in analysis_config["parameters"]["emulators"].values():
-
         # Extract observable names from both old and new formats
-        observable_list = emulation_group_settings['observable_list']
+        observable_list = emulation_group_settings["observable_list"]
         include_list = []
 
         for obs_item in observable_list:
             if isinstance(obs_item, str):
                 # Old format: just the observable name
                 include_list.append(obs_item)
-            elif isinstance(obs_item, dict) and 'observable' in obs_item:
+            elif isinstance(obs_item, dict) and "observable" in obs_item:
                 # New format: extract observable name from dict
-                obs_name = obs_item['observable']
+                obs_name = obs_item["observable"]
                 include_list.append(obs_name)
 
         # Verify include_list contains only strings (safety check)
@@ -1684,6 +1789,7 @@ def _accept_observable(analysis_config, filename):
 ####################################################################################################################
 # DESIGN POINT HANDLING
 ####################################################################################################################
+
 
 def _read_design_points_from_design_dat(
     observable_table_dir: Path | str,

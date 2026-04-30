@@ -252,24 +252,38 @@ def parse_systematic_config(sys_config_string: str) -> dict:
         logger.debug(f"Parsed sum: {sys_config_string} -> length={cor_length}, strength={cor_strength}")
 
     else:
-        # Individual systematic: name:group_tag
-        if len(parts) != 2:
-            msg = (
+        # Individual systematic: name:group_tag OR just name (auto-generates unique tag)
+        if len(parts) == 1:
+            # Just 'name' provided - create unique group tag (name itself)
+            # This makes each systematic uncorrelated across observables by default
+            # User can then use correlation_groups to specify correlation parameters
+            config = {
+                "type": "individual",
+                "name": parts[0],
+                "group_tag": parts[0],  # Use name as group tag (unique per systematic)
+                "cor_length": -1,  # Not used for individual
+                "cor_strength": 1.0,  # Not used for individual
+            }
+            logger.debug(f"Parsed individual (auto-tag): {sys_config_string} -> name='{parts[0]}', group='{parts[0]}'")
+
+        elif len(parts) == 2:
+            # Full 'name:group_tag' format
+            config = {
+                "type": "individual",
+                "name": parts[0],
+                "group_tag": parts[1],
+                "cor_length": -1,  # Not used for individual
+                "cor_strength": 1.0,  # Not used for individual
+            }
+            logger.debug(f"Parsed individual: {sys_config_string} -> name='{parts[0]}', group='{parts[1]}'")
+
+        else:
+            # More than 2 parts - error
+            raise ValueError(
                 f"Invalid individual systematic format: '{sys_config_string}'. "
-                f"Individual systematics must use format 'name:group_tag' (e.g., 'jec:alice'). "
+                f"Individual systematics must use format 'name' or 'name:group_tag' (e.g., 'jec' or 'jec:alice'). "
                 f"Correlation length/strength parameters are not allowed - individual systematics are always fully correlated within observable."
             )
-            raise ValueError(msg)
-
-        config = {
-            "type": "individual",
-            "name": parts[0],
-            "group_tag": parts[1],
-            "cor_length": -1,  # Not used for individual
-            "cor_strength": 1.0,  # Not used for individual
-        }
-        logger.debug(f"Parsed individual: {sys_config_string} -> name='{parts[0]}', group='{parts[1]}'")
-
     # Validate correlation parameters (only meaningful for sum)
     if config["type"] == "sum":
         if config["cor_strength"] < 0.0 or config["cor_strength"] > 1.0:
@@ -310,7 +324,10 @@ class SystematicCorrelationManager:
 
     _pending_correlation_params: dict[str, str] = attrs.field(factory=dict, init=False)
 
-    def parse_configuration(self, parsed_observables: list[tuple[str, list[str], list[str]]]):
+    default_cor_length: int = attrs.field(default=-1)  # -1 means full correlation (all bins)
+    default_cor_strength: float = attrs.field(default=1.0)  # 1.0 means fully correlated
+
+    def parse_configuration(self, parsed_observables: list[tuple[str, list[str], list[str], str | None]]):
         """
         Parse systematic configuration with two separate systems:
 
@@ -336,7 +353,7 @@ class SystematicCorrelationManager:
 
         all_systematic_full_names = set()
 
-        for obs_name, sys_data_list, _sys_theory_list in parsed_observables:
+        for obs_name, sys_data_list, sys_theory_list, external_stat_cov in parsed_observables:
             self.observable_systematics[obs_name] = []
 
             # Check for mixing (not allowed) - collect types first
@@ -361,12 +378,22 @@ class SystematicCorrelationManager:
                 is_summed = config["type"] == "sum"
 
                 # Construct full name
-                if is_summed:  # noqa: SIM108
+                if is_summed:
                     # Sum: Make unique per observable (no cross-observable correlation)
                     full_name = f"sum_{obs_name}"
                 else:
                     # Individual: Use base name + group tag
-                    full_name = f"{sys_base_name}:{correlation_tag}"
+                    # NEW: If group_tag equals base_name (auto-generated), make it unique per observable
+                    if correlation_tag == sys_base_name:
+                        # Auto-generated tag - make it unique per observable
+                        correlation_tag = f"{sys_base_name}_{obs_name}"
+                        full_name = f"{sys_base_name}:{correlation_tag}"
+                        logger.debug(
+                            f"  Auto-generated unique tag for {sys_base_name} on {obs_name}: {correlation_tag}"
+                        )
+                    else:
+                        # Explicit tag from user - use as-is
+                        full_name = f"{sys_base_name}:{correlation_tag}"
 
                 # Store systematic info
                 sys_info = SystematicInfo(
@@ -404,36 +431,66 @@ class SystematicCorrelationManager:
             )
 
     def set_correlation_parameters(self, correlation_groups_params: dict[str, str]):
-        """Store correlation parameters to be applied after correlation groups are built."""
+        """
+        Store correlation parameters to be applied after correlation groups are built.
+
+        Special handling for 'default' key which sets fallback parameters for unspecified groups.
+
+        Args:
+            correlation_groups_params: Dict like {'default': '20:0.8', 'alice': '10:0.9', ...}
+        """
         logger.info("Storing correlation parameters for later application...")
+
+        # Check for 'default' key and extract it
+        if "default" in correlation_groups_params:
+            default_str = correlation_groups_params["default"]
+            logger.info(f"Found 'default' correlation parameters: {default_str}")
+
+            try:
+                # Parse "cor_length:cor_strength" format
+                parts = default_str.split(":")
+                if len(parts) != 2:
+                    raise ValueError(f"Expected 'length:strength', got '{default_str}'")
+
+                self.default_cor_length = int(parts[0])
+                self.default_cor_strength = float(parts[1])
+
+                # Validate
+                if self.default_cor_length < -1 or self.default_cor_length == 0:
+                    logger.warning(f"Invalid default cor_length={self.default_cor_length}, using -1")
+                    self.default_cor_length = -1
+                if self.default_cor_strength < 0.0 or self.default_cor_strength > 1.0:
+                    logger.warning(f"default cor_strength={self.default_cor_strength} outside [0,1], clipping")
+                    self.default_cor_strength = np.clip(self.default_cor_strength, 0.0, 1.0)
+
+                logger.info(
+                    f"Set default correlation parameters: length={self.default_cor_length}, strength={self.default_cor_strength}"
+                )
+
+            except (ValueError, IndexError) as e:
+                logger.error(f"Failed to parse 'default' correlation parameters '{default_str}': {e}")
+                logger.error("Using default values: cor_length=-1, cor_strength=1.0")
+                self.default_cor_length = -1
+                self.default_cor_strength = 1.0
+
+        # Store all parameters (including 'default' for now, will be filtered later)
         self._pending_correlation_params = correlation_groups_params
         logger.info(f"Stored parameters for {len(correlation_groups_params)} group tags")
 
-    def _apply_correlation_parameters(self, correlation_groups_params: dict[str, str]) -> None:
+    def _apply_correlation_parameters(self, correlation_groups_params: dict[str, str]):
         """
-        Apply correlation parameters to individual systematic groups from config.
+        Set correlation parameters for individual systematic groups from config.
 
-        This is the internal method that actually updates SystematicInfo objects.
-        Called by set_correlation_parameters() after groups are registered.
-
-        For each correlation group tag, updates all individual systematics in that
-        group with the specified cor_length and cor_strength parameters.
-
-        NOTE: Only applies to individual systematics, not summed systematics.
-        NOTE: This is called automatically during covariance matrix construction.
+        For groups explicitly listed in correlation_groups_params: use specified parameters
+        For groups NOT listed: use default parameters (self.default_cor_length, self.default_cor_strength)
 
         Args:
-            correlation_groups_params: Dict like {'alice': '10:0.9', 'cms': '5:0.95'}
-                                    Keys are group tags, values are 'length:strength'
-
-        Example:
-            >>> manager._apply_correlation_parameters({'alice': '10:0.8'})
-            # Updates all systematics in 'alice' group with length=10, strength=0.8
+            correlation_groups_params: Dict like {'default': '20:0.8', 'alice': '10:0.9', 'cms': '5:0.95'}
         """
         logger.info("Setting correlation parameters from correlation_groups config...")
 
-        # Track which tags are configured vs used
-        configured_tags = set(correlation_groups_params.keys())
+        # Track which tags are configured vs used (excluding 'default')
+        configured_tags = set(correlation_groups_params.keys()) - {"default"}
         used_tags = set(self.correlation_groups.keys())
 
         # Warn about unused configurations
@@ -441,32 +498,47 @@ class SystematicCorrelationManager:
         if unused_tags:
             logger.warning(f"Correlation groups configured but not used: {sorted(unused_tags)}")
 
-        # Parse and apply correlation parameters
-        for group_tag, param_string in correlation_groups_params.items():
-            if group_tag not in self.correlation_groups:
-                continue
+        # Find groups that need default parameters
+        unconfigured_tags = used_tags - configured_tags
+        if unconfigured_tags:
+            logger.info(f"Groups using default parameters: {sorted(unconfigured_tags)}")
 
-            # Parse "cor_length:cor_strength" format
-            try:
-                parts = param_string.split(":")
-                if len(parts) != 2:
-                    msg = f"Expected 'length:strength', got '{param_string}'"
-                    raise ValueError(msg)
+        # Process all used groups
+        for group_tag in used_tags:
+            # Determine which parameters to use
+            if group_tag in correlation_groups_params:
+                # Use explicitly configured parameters
+                param_string = correlation_groups_params[group_tag]
 
-                cor_length = int(parts[0])
-                cor_strength = float(parts[1])
+                try:
+                    parts = param_string.split(":")
+                    if len(parts) != 2:
+                        raise ValueError(f"Expected 'length:strength', got '{param_string}'")
 
-                # Validate
-                if cor_length < -1 or cor_length == 0:
-                    logger.warning(f"Invalid cor_length={cor_length}, using -1")
-                    cor_length = -1
-                if cor_strength < 0.0 or cor_strength > 1.0:
-                    logger.warning(f"cor_strength={cor_strength} outside [0,1], clipping")
-                    cor_strength = np.clip(cor_strength, 0.0, 1.0)
+                    cor_length = int(parts[0])
+                    cor_strength = float(parts[1])
 
-            except (ValueError, IndexError) as e:
-                logger.error(f"Failed to parse '{group_tag}': {param_string} - {e}")
-                continue
+                    # Validate
+                    if cor_length < -1 or cor_length == 0:
+                        logger.warning(f"Invalid cor_length={cor_length}, using -1")
+                        cor_length = -1
+                    if cor_strength < 0.0 or cor_strength > 1.0:
+                        logger.warning(f"cor_strength={cor_strength} outside [0,1], clipping")
+                        cor_strength = np.clip(cor_strength, 0.0, 1.0)
+
+                    source = "explicit"
+
+                except (ValueError, IndexError) as e:
+                    logger.error(f"Failed to parse '{group_tag}': {param_string} - {e}")
+                    logger.error(f"Using default parameters for group '{group_tag}'")
+                    cor_length = self.default_cor_length
+                    cor_strength = self.default_cor_strength
+                    source = "default (error fallback)"
+            else:
+                # Use default parameters
+                cor_length = self.default_cor_length
+                cor_strength = self.default_cor_strength
+                source = "default"
 
             # Find all systematics in this group
             group_systematics = set()
@@ -484,7 +556,7 @@ class SystematicCorrelationManager:
                         n_updated += 1
 
             logger.info(
-                f"  Group '{group_tag}': Updated {n_updated} systematic(s) with length={cor_length}, strength={cor_strength}"
+                f"  Group '{group_tag}': Updated {n_updated} systematic(s) with length={cor_length}, strength={cor_strength} ({source})"
             )
 
         logger.info("Correlation parameter configuration complete")
@@ -917,6 +989,8 @@ class SystematicCorrelationManager:
             "observable_systematics": dict(self.observable_systematics),
             "all_systematic_names": self.all_systematic_names,
             "_pending_correlation_params": self._pending_correlation_params,
+            "default_cor_length": self.default_cor_length,  # ADD THIS LINE
+            "default_cor_strength": self.default_cor_strength,  # ADD THIS LINE
             "class_name": "SystematicCorrelationManager",  # For validation during loading
         }
 
@@ -938,6 +1012,9 @@ class SystematicCorrelationManager:
 
         # Create new instance
         manager = cls()
+
+        manager.default_cor_length = int(data.get("default_cor_length", -1))
+        manager.default_cor_strength = float(data.get("default_cor_strength", 1.0))
 
         # Restore correlation_groups (convert back to defaultdict)
         # Handle potential numpy arrays from HDF5

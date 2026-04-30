@@ -34,7 +34,15 @@ g_emulation_results: dict[str, dict[str, npt.NDArray[np.float64]]] = None
 g_experimental_results: dict = None
 g_emulator_cov_unexplained: dict = None
 
-def initialize_pool_variables(local_min, local_max, local_emulation_config, local_emulation_results, local_experimental_results, local_emulator_cov_unexplained) -> None:
+
+def initialize_pool_variables(
+    local_min,
+    local_max,
+    local_emulation_config,
+    local_emulation_results,
+    local_experimental_results,
+    local_emulator_cov_unexplained,
+) -> None:
     """
     Initialize global variables for multiprocessing pool.
 
@@ -43,12 +51,12 @@ def initialize_pool_variables(local_min, local_max, local_emulation_config, loca
     - Store in global variable for efficient reuse during MCMC
     """
 
-    global g_min  # noqa: PLW0603
-    global g_max  # noqa: PLW0603
-    global g_emulation_config  # noqa: PLW0603
-    global g_emulation_results  # noqa: PLW0603
-    global g_experimental_results  # noqa: PLW0603
-    global g_emulator_cov_unexplained  # noqa: PLW0603
+    global g_min
+    global g_max
+    global g_emulation_config
+    global g_emulation_results
+    global g_experimental_results
+    global g_emulator_cov_unexplained
     global g_systematic_covariance
     g_min = local_min
     g_max = local_max
@@ -61,61 +69,86 @@ def initialize_pool_variables(local_min, local_max, local_emulation_config, loca
     # This is efficient because systematic covariance doesn't depend on parameter values
 
     # Check for external covariance first (expert mode)
-    if 'external_covariance' in g_experimental_results:
+    if "external_covariance" in g_experimental_results:
         logger.info("External covariance mode: skipping systematic covariance construction")
         g_systematic_covariance = None  # Not used in external mode
 
-        ext_cov = g_experimental_results['external_covariance']
-        
+        ext_cov = g_experimental_results["external_covariance"]
+
         # Check if positive definite
         eigenvals = np.linalg.eigvals(ext_cov)
         logger.info(f"External covariance eigenvalues: min={np.min(eigenvals):.6e}, max={np.max(eigenvals):.6e}")
         if np.min(eigenvals) <= 0:
             logger.error("External covariance is NOT positive definite!")
-        
-    elif 'correlation_manager' in g_experimental_results:
+
+    elif "correlation_manager" in g_experimental_results:
         logger.info("Calculating systematic covariance matrix for MCMC...")
-        correlation_manager = g_experimental_results['correlation_manager']
-        systematic_uncertainties = g_experimental_results['y_err_syst']
-        systematic_names = g_experimental_results['systematic_names']
-        n_features = len(g_experimental_results['y'])
-        
+        correlation_manager = g_experimental_results["correlation_manager"]
+        systematic_uncertainties = g_experimental_results["y_err_syst"]
+        systematic_names = g_experimental_results["systematic_names"]
+        n_features = len(g_experimental_results["y"])
+
         g_systematic_covariance = correlation_manager.create_systematic_covariance_matrix(
             systematic_uncertainties, systematic_names, n_features
         )
-        
+
     else:
         logger.info("No correlation manager found - using diagonal systematic uncertainties")
         # Fallback: create diagonal systematic covariance if available
-        if 'y_err_syst' in g_experimental_results and g_experimental_results['y_err_syst'].shape[1] > 0:
-            n_features = len(g_experimental_results['y'])
+        if "y_err_syst" in g_experimental_results and g_experimental_results["y_err_syst"].shape[1] > 0:
+            n_features = len(g_experimental_results["y"])
             g_systematic_covariance = np.zeros((n_features, n_features))
             # Sum over systematic sources (assuming full correlation within each source)
-            for sys_idx in range(g_experimental_results['y_err_syst'].shape[1]):
-                sys_errors = g_experimental_results['y_err_syst'][:, sys_idx]
+            for sys_idx in range(g_experimental_results["y_err_syst"].shape[1]):
+                sys_errors = g_experimental_results["y_err_syst"][:, sys_idx]
                 g_systematic_covariance += np.outer(sys_errors, sys_errors)
         else:
             # No systematic uncertainties
-            n_features = len(g_experimental_results['y'])
+            n_features = len(g_experimental_results["y"])
             g_systematic_covariance = np.zeros((n_features, n_features))
 
-        # SAVE covariance matrices for plotting
+    # Build statistical covariance (may include per-observable external stat cov)
+    if g_experimental_results.get("per_observable_external_stat_cov"):
+        # Build with per-observable external stat cov blocks
+        n_features = len(g_experimental_results["y"])
+        C_stat = np.zeros((n_features, n_features))
+
+        # Fill diagonal with standard statistical errors by default
+        np.fill_diagonal(C_stat, g_experimental_results["y_err_stat"] ** 2)
+
+        # Replace blocks with external stat cov where specified
+        for obs_label, cov_info in g_experimental_results["per_observable_external_stat_cov"].items():
+            start = cov_info["start"]
+            end = cov_info["end"]
+            ext_cov = cov_info["matrix"]
+
+            # Replace the block
+            C_stat[start:end, start:end] = ext_cov
+
+            logger.info(f"Saved external stat cov for {obs_label} (bins {start}-{end}) to plotting file")
+
+    else:
+        # Use diagonal statistical errors
+        C_stat = np.diag(g_experimental_results["y_err_stat"] ** 2)
+
     covariance_matrices = {
-        'statistical': np.diag(g_experimental_results['y_err_stat']**2), # external_cov mode will ignore this
-        'systematic_total': g_systematic_covariance,
-        'emulator': None,  # Will be filled with emulator predictions
+        "statistical": C_stat,  # Now includes per-observable external stat cov if present
+        "systematic_total": g_systematic_covariance,
+        "emulator": None,  # Will be filled with emulator predictions
     }
-    
+
     # Save to a separate file for plotting
     import pickle
     from pathlib import Path
+
     output_dir = Path(g_emulation_config.output_dir)
-    output_file = output_dir / 'covariance_matrices.pkl'
-    with open(output_file, 'wb') as f:
+    output_file = output_dir / "covariance_matrices.pkl"
+    with open(output_file, "wb") as f:
         pickle.dump(covariance_matrices, f)
     logger.info(f"Saved covariance matrices to {output_file}")
 
-#---------------------------------------------------------------
+
+# ---------------------------------------------------------------
 def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDArray[np.float64]:
     """
     Function to evaluate the log-posterior for a given set of input parameters.
@@ -123,7 +156,7 @@ def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDAr
     This function is called by https://emcee.readthedocs.io/en/stable/user/sampler/
 
     CHANGES August 2025
-    - Updated data access to use 'y_err_stat' instead of 'y_err' 
+    - Updated data access to use 'y_err_stat' instead of 'y_err'
     - Added systematic covariance matrix to likelihood calculation
     - Maintains backward compatibility
 
@@ -148,48 +181,72 @@ def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDAr
 
     # Evaluate log-posterior for samples inside parameter bounds
     n_samples = np.count_nonzero(inside)
-    n_features = g_experimental_results['y'].shape[0]
+    n_features = g_experimental_results["y"].shape[0]
 
     if n_samples > 0:
-
         # Get experimental data
-        data_y = g_experimental_results['y']
-        data_y_err = g_experimental_results['y_err_stat']
+        data_y = g_experimental_results["y"]
+        data_y_err = g_experimental_results["y_err_stat"]
 
         # Compute emulator prediction
         # Returns dict of matrices of emulator predictions:
         #     emulator_predictions['central_value'] -- (n_samples, n_features)
         #     emulator_predictions['cov'] -- (n_samples, n_features, n_features)
-        emulator_predictions = emulation.predict(X[inside], g_emulation_config,
-                                                 emulator_results=g_emulation_results,
-                                                 emulator_additional_covariance=g_emulator_cov_unexplained)
+        emulator_predictions = emulation.predict(
+            X[inside],
+            g_emulation_config,
+            emulator_results=g_emulation_results,
+            emulator_additional_covariance=g_emulator_cov_unexplained,
+        )
 
         # Construct array to store the difference between emulator prediction and experimental data
         # (using broadcasting to subtract each data point from each emulator prediction)
-        assert data_y.shape[0] == emulator_predictions['central_value'].shape[1]
-        dY = emulator_predictions['central_value'] - data_y
+        assert data_y.shape[0] == emulator_predictions["central_value"].shape[1]
+        dY = emulator_predictions["central_value"] - data_y
 
         # Construct the covariance matrix
         # NOTE-STAT TODO: include full experimental data covariance matrix -- currently we only include uncorrelated data uncertainty
-        #-------------------------
+        # -------------------------
         # Construct the covariance matrix
         covariance_matrix = np.zeros((n_samples, n_features, n_features))
-        covariance_matrix += emulator_predictions['cov']
+        covariance_matrix += emulator_predictions["cov"]
 
         # Add experimental uncertainty based on mode
-        if 'external_covariance' in g_experimental_results:
+        if "external_covariance" in g_experimental_results:
             # MODE 1: External covariance (expert mode)
-            covariance_matrix += g_experimental_results['external_covariance'][np.newaxis, :, :]
+            covariance_matrix += g_experimental_results["external_covariance"][np.newaxis, :, :]
 
             if np.any(~np.isfinite(covariance_matrix)):
                 logger.error("Non-finite values in covariance matrix!")
         else:
             # MODE 2 & 3: Standard mode (stat + sys)
-            covariance_matrix += np.diag(data_y_err**2)
+
+            # Check for per-observable external stat covariances
+            if g_experimental_results.get("per_observable_external_stat_cov"):
+                # Build statistical covariance with per-observable external cov where specified
+                C_stat = np.zeros((n_features, n_features))
+
+                # Fill diagonal with standard statistical errors by default
+                np.fill_diagonal(C_stat, data_y_err**2)
+
+                # Replace blocks with external stat cov where specified
+                for obs_label, cov_info in g_experimental_results["per_observable_external_stat_cov"].items():
+                    start = cov_info["start"]
+                    end = cov_info["end"]
+                    ext_cov = cov_info["matrix"]
+
+                    # Replace the block
+                    C_stat[start:end, start:end] = ext_cov
+
+                covariance_matrix += C_stat[np.newaxis, :, :]
+            else:
+                # Use diagonal statistical errors
+                covariance_matrix += np.diag(data_y_err**2)
+
             # Add systematic covariance matrix (same for all parameter points)
             if g_systematic_covariance is not None:
                 covariance_matrix += g_systematic_covariance[np.newaxis, :, :]
-        
+
         # Compute log likelihood at each point in the sample
         # We take constant priors, so the log-likelihood is just the log-posterior
         # (since above we set the log-posterior to -inf for samples outside the parameter bounds)
@@ -199,7 +256,8 @@ def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDAr
 
     return log_posterior
 
-#---------------------------------------------------------------
+
+# ---------------------------------------------------------------
 def _loglikelihood(y, cov):
     """
     Evaluate the multivariate-normal log-likelihood for difference vector `y`
@@ -222,22 +280,20 @@ def _loglikelihood(y, cov):
     L, info = lapack.dpotrf(cov, clean=False)
 
     if info < 0:
-        msg = 'lapack dpotrf error: '
-        msg += f'the {-info}-th argument had an illegal value'
+        msg = "lapack dpotrf error: "
+        msg += f"the {-info}-th argument had an illegal value"
         raise ValueError(msg)
     if info < 0:
-        msg = 'lapack dpotrf error: '
-        msg += f'the leading minor of order {info} is not positive definite'
+        msg = "lapack dpotrf error: "
+        msg += f"the leading minor of order {info} is not positive definite"
         raise np.linalg.LinAlgError(msg)
 
     # Solve for alpha = cov^-1.y using the Cholesky decomp.
     alpha, info = lapack.dpotrs(L, y)
 
     if info != 0:
-        msg = 'lapack dpotrs error: '
-        msg += f'the {-info}-th argument had an illegal value'
-        raise ValueError(
-        )
+        msg = "lapack dpotrs error: "
+        msg += f"the {-info}-th argument had an illegal value"
+        raise ValueError()
 
-    return -.5*np.dot(y, alpha) - np.log(L.diagonal()).sum()
-
+    return -0.5 * np.dot(y, alpha) - np.log(L.diagonal()).sum()

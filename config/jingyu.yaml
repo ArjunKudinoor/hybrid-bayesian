@@ -130,7 +130,7 @@ analysis_base: &model_base
   model_name: 'MATTER+LBT'
   parameterizations: ['exponential']
   sqrts_list: [200, 2760, 5020]
-  centrality_range: [0,10]
+  centrality_range: [[0,10], [10, 30], [30, 50]]
   # Can also be a list of centrality ranges. eg:
   #centrality_range: [[0, 10], [30, 50]]
   recoil_scheme: 'negative_recominber'
@@ -149,7 +149,9 @@ analysis_base: &model_base
 analyses:
   correlation_groups:
     alice: "2:0.3"
-    cms: "5:0.95"
+    5020: "-1:1"
+    #cms: "5:0.95"
+    default: "5:0.95"
   analysis_jet:
     #external_covariance_file: 'Data/external_covariance_test.txt'
     parameters:
@@ -163,10 +165,12 @@ analyses:
           observable_list:
             - observable: '5020__PbPb__inclusive_jet__pt_alice__R0.2__0-10'
               sys_data: ['sys_jec:alice', 'sys_taa:5020']
+              #external_stat_cov: 'Data/test_stat_cov_7x7.txt'
               #sys_data: ['sum:5:0.9']
             - observable: '5020__PbPb__inclusive_jet__pt_cms__R0.2__0-10'
-              sys_data: ['sys_jec:cms', 'sys_taa:5020']
+              sys_data: ['sys_jec', 'sys_taa:5020']
               #sys_data: ['sum:5:0.8']
+            #- observable: '5020__PbPb__inclusive_jet__pt_cms__R0.2__30-50'
       mcmc:
         <<: *default_mcmc_parameters
         n_walkers: 20
