@@ -9,14 +9,26 @@ import argparse
 import logging
 import os
 import shutil
-import yaml
 from pathlib import Path
-import numpy as np
 
-from bayesian import analysis, data_IO, emulation, preprocess_input_data, mcmc
-from bayesian import plot_input_data, plot_emulation, plot_mcmc, plot_qhat, plot_closure, plot_analyses, plot_covariance
+import yaml
 
-from bayesian import common_base, helpers
+from bayesian import (
+    analysis,
+    common_base,
+    data_IO,
+    emulation,
+    helpers,
+    plot_analyses,
+    plot_closure,
+    plot_covariance,
+    plot_emulation,
+    plot_input_data,
+    plot_mcmc,
+    plot_qhat,
+    preprocess_input_data,
+)
+from bayesian import mc_sampling as mcmc
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +86,7 @@ class SteerAnalysis(common_base.CommonBase):
         if not self._reduce_logging_to_file:
             # Add logging to file
             _root_log = logging.getLogger()
-            _root_log.addHandler(logging.FileHandler(self.output_dir / 'steer_analysis.log', 'w'))
+            _root_log.addHandler(logging.FileHandler(self.output_dir / "steer_analysis.log", "w"))
 
             # Also write analysis config to shared directory
             shutil.copy(self.config_file, Path(self.output_dir) / "steer_analysis_config.yaml")
@@ -103,9 +115,8 @@ class SteerAnalysis(common_base.CommonBase):
                 for parameterization in analysis_config.get("parameterizations", ["default"]):
                     analysis_settings = analysis.AnalysisSettings.from_config_file(
                         analysis_name=analysis_name,
-                        # TODO(RJE): Need to figure out whether I need to pass this here - or if not, how to handle it.
                         parameterization=parameterization,
-                        config_file=self.config_file
+                        config_file=self.config_file,
                     )
 
                     # Initialize design points, predictions, data, and uncertainties
@@ -196,11 +207,8 @@ class SteerAnalysis(common_base.CommonBase):
                         logger.info("")
                         logger.info("------------------------------------------------------------------------")
                         logger.info(f"Running MCMC for {analysis_name}_{parameterization}...")
-                        mcmc_config = mcmc.MCMCConfig(
-                            analysis_name=analysis_name,
-                            parameterization=parameterization,
-                            analysis_config=analysis_config,
-                            config_file=self.config_file,
+                        mcmc_config = mcmc.MCConfig.from_config_file(
+                            analysis_settings=analysis_settings,
                         )
                         mcmc.run_mcmc(mcmc_config)
                         progress.update(mcmc_task, advance=100, visible=False)
@@ -224,14 +232,11 @@ class SteerAnalysis(common_base.CommonBase):
                             logger.info(
                                 f"Running closure tests for {analysis_name}_{parameterization}, validation_design_point={validation_design_point}, validation_index={i}..."
                             )
-                            mcmc_config = mcmc.MCMCConfig(
-                                analysis_name=analysis_name,
-                                parameterization=parameterization,
-                                analysis_config=analysis_config,
-                                config_file=self.config_file,
+                            mcmc_config = mcmc.MCConfig.from_config_file(
+                                analysis_settings=analysis_settings,
                                 closure_index=i,
                             )  # Use validation array index, not design point ID
-                            mcmc.run_mcmc(mcmc_config, closure_index=i)
+                            mcmc.run_mcmc(mcmc_config)
                             progress.update(closure_test_task, advance=1)
 
                     # progress.update(parameterization_task, advance=1)
@@ -258,7 +263,7 @@ class SteerAnalysis(common_base.CommonBase):
                         config_file=self.config_file,
                     )
                     plot_input_data.plot(emulation_config)
-                    logger.info(f"Done!")
+                    logger.info("Done!")
                     logger.info("")
 
                 if self.plot["emulators"]:
@@ -271,20 +276,24 @@ class SteerAnalysis(common_base.CommonBase):
                         config_file=self.config_file,
                     )
                     plot_emulation.plot(emulation_config)
-                    logger.info(f"Done!")
+                    logger.info("Done!")
                     logger.info("")
+
+                if self.plot["mcmc"] or self.plot["qhat"] or self.plot["closure_tests"]:
+                    _plot_analysis_settings = analysis.AnalysisSettings.from_config_file(
+                        analysis_name=analysis_name,
+                        config_file=self.config_file,
+                        parameterization=parameterization,
+                    )
+                    _plot_mcmc_config = mcmc.MCConfig.from_config_file(
+                        analysis_settings=_plot_analysis_settings,
+                    )
 
                 if self.plot["mcmc"]:
                     logger.info("------------------------------------------------------------------------")
                     logger.info(f"Plotting MCMC for {analysis_name}_{parameterization}...")
-                    mcmc_config = mcmc.MCMCConfig(
-                        analysis_name=analysis_name,
-                        parameterization=parameterization,
-                        analysis_config=analysis_config,
-                        config_file=self.config_file,
-                    )
-                    plot_mcmc.plot(mcmc_config)
-                    logger.info(f"Done!")
+                    plot_mcmc.plot(_plot_mcmc_config)
+                    logger.info("Done!")
                     logger.info("")
 
                 if self.plot["covariance"]:
@@ -297,27 +306,15 @@ class SteerAnalysis(common_base.CommonBase):
                 if self.plot["qhat"]:
                     logger.info("------------------------------------------------------------------------")
                     logger.info(f"Plotting qhat results {analysis_name}_{parameterization}...")
-                    mcmc_config = mcmc.MCMCConfig(
-                        analysis_name=analysis_name,
-                        parameterization=parameterization,
-                        analysis_config=analysis_config,
-                        config_file=self.config_file,
-                    )
-                    plot_qhat.plot(mcmc_config)
-                    logger.info(f"Done!")
+                    plot_qhat.plot(_plot_mcmc_config)
+                    logger.info("Done!")
                     logger.info("")
 
                 if self.plot["closure_tests"]:
                     logger.info("------------------------------------------------------------------------")
                     logger.info(f"Plotting closure test results {analysis_name}_{parameterization}...")
-                    mcmc_config = mcmc.MCMCConfig(
-                        analysis_name=analysis_name,
-                        parameterization=parameterization,
-                        analysis_config=analysis_config,
-                        config_file=self.config_file,
-                    )
-                    plot_closure.plot(mcmc_config)
-                    logger.info(f"Done!")
+                    plot_closure.plot(_plot_mcmc_config)
+                    logger.info("Done!")
                     logger.info("")
 
         # Plots across multiple analyses

@@ -20,7 +20,7 @@ class AnalysisIO:
     observables_table_dir: Path | str = attrs.field(converter=Path)
     observables_config_dir: Path | str = attrs.field(converter=Path)
     observables_filename: str = attrs.field()
-    _output_dir: Path = attrs.field()
+    _output_dir: Path = attrs.field(converter=Path)
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> AnalysisIO:
@@ -51,25 +51,44 @@ class AnalysisSettings:
     raw_analysis_config: dict[str, Any] = attrs.field(factory=dict)
 
     @classmethod
-    def from_config(cls, analysis_name: str, config_file: Path, config: dict[str, Any]) -> AnalysisSettings:
+    def from_config(
+        cls,
+        analysis_name: str,
+        config_file: Path,
+        config: dict[str, Any],
+        parameterization: str = "",
+    ) -> AnalysisSettings:
         """
         Initialize the analysis configuration from a config file.
         """
         raw_analysis_config = config["analyses"][analysis_name]
+        if not parameterization:
+            # Fall back to first listed parameterization
+            parameterization = raw_analysis_config["parameterizations"][0]
         return cls(
             name=analysis_name,
-            parameterization=raw_analysis_config["parameterization"],
+            parameterization=parameterization,
             config_file=config_file,
             io=AnalysisIO.from_config(config=config),
             raw_analysis_config=raw_analysis_config,
         )
 
     @classmethod
-    def from_config_file(cls, analysis_name: str, config_file: str | Path) -> AnalysisSettings:
+    def from_config_file(
+        cls,
+        analysis_name: str,
+        config_file: str | Path,
+        parameterization: str = "",
+    ) -> AnalysisSettings:
         with Path(config_file).open() as stream:
             config = yaml.safe_load(stream)
 
-        return cls.from_config(analysis_name=analysis_name, config_file=Path(config_file), config=config)
+        return cls.from_config(
+            analysis_name=analysis_name,
+            config_file=Path(config_file),
+            config=config,
+            parameterization=parameterization,
+        )
 
     @property
     def output_dir(self) -> Path:

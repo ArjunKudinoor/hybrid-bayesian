@@ -1335,6 +1335,8 @@ def read_dict_from_h5(input_dir: Path, filename: str, verbose: bool = True) -> d
     :param str input_dir: directory from which to read data
     :param str filename: name of hdf5 file to read
     """
+    # Validation
+    input_dir = Path(input_dir)
     if verbose:
         logger.info(f"\nLoading results from {input_dir}/{filename}...")
 

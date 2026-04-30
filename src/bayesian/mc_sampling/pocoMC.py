@@ -1,5 +1,12 @@
 """Sampling implementation using pocoMC
 
+Implementation of the mc_sampling plugin interface using the Preconditioned Monte Carlo
+(PMC) sampler from pocoMC. PMC uses normalizing flows to precondition the target
+distribution for more efficient sampling.
+
+This implementation draws heavily on the wrapper by Hendrik Roch:
+https://github.com/Hendrik1704/GPBayesTools-HIC
+
 .. codeauthor:: Raymond Ehlers <raymond.ehlers@cern.ch>, LBL/UCB
 """
 
@@ -7,81 +14,107 @@ from __future__ import annotations
 
 import logging
 import multiprocessing
-from pathlib import Path
+import pickle
+from typing import Any, ClassVar
 
+import attrs
 import numpy as np
 import numpy.typing as npt
 
-from bayesian import emulation
+from bayesian import emulation, log_posterior
+from bayesian.mc_sampling import base as mc_sampling_base
 
 logger = logging.getLogger(__name__)
 
+_register_name = "pocoMC"
+
+
+@attrs.define
+class SamplerSettings:
+    """Settings for the pocoMC Preconditioned Monte Carlo sampler.
+
+    Attributes:
+        sampler_name: Name matching _register_name.
+        base_settings: Base sampler settings (holds raw config dict).
+        n_effective: Effective sample size maintained during the run (default: 512).
+        n_active: Number of active particles; must be < n_effective (default: 250).
+        draw_n_prior_samples: Number of prior samples to draw initially.
+        sampler_type: MCMC kernel type — 'tpcn' (t-preconditioned Crank-Nicolson,
+            recommended) or 'rwm' (random-walk Metropolis). Default: 'tpcn'.
+        n_total_samples: Total effectively independent samples to collect (default: 5000).
+        n_importance_samples_for_evidence: Importance samples for evidence estimation
+            (default: 5000). Set to 0 to use SMC estimate instead.
+        settings: Raw MCMC config dict.
+    """
+
+    sampler_name: ClassVar[str] = "pocoMC"
+    base_settings: mc_sampling_base.BaseSamplerSettings = attrs.field()
+    n_effective: int = attrs.field()
+    n_active: int = attrs.field()
+    draw_n_prior_samples: int = attrs.field()
+    sampler_type: str = attrs.field()
+    n_total_samples: int = attrs.field()
+    n_importance_samples_for_evidence: int = attrs.field()
+    settings: dict[str, Any] = attrs.field()
+
+    @classmethod
+    def from_config(cls, config: dict[str, Any]) -> SamplerSettings:
+        poco = config.get("pocoMC", {})
+        n_effective = poco.get("n_effective", 512)
+        n_active = poco.get("n_active", 250)
+        if n_active >= n_effective:
+            msg = f"n_active ({n_active}) must be smaller than n_effective ({n_effective})"
+            raise ValueError(msg)
+        return cls(
+            base_settings=mc_sampling_base.BaseSamplerSettings.from_config(config),
+            n_effective=n_effective,
+            n_active=n_active,
+            draw_n_prior_samples=poco.get("draw_n_prior_samples", 2 * (n_effective // n_active) * n_active),
+            sampler_type=poco.get("sampler_type", "tpcn"),
+            n_total_samples=poco.get("n_total_samples", 5000),
+            n_importance_samples_for_evidence=poco.get("n_importance_samples_for_evidence", 5000),
+            settings=config,
+        )
+
 
 def run_sampling(
-    config: MCMCConfig,
+    config: mc_sampling_base.MCConfig,
     emulation_config: emulation.EmulationConfig,
-    emulation_results: dict[str, dict[str, npt.NDArray[np.float64]]],
-    emulator_cov_unexplained: dict,
-    experimental_results: dict,
+    emulation_results: dict[str, Any],
+    experimental_results: dict[str, Any],
     parameter_min: npt.NDArray[np.float64],
     parameter_max: npt.NDArray[np.float64],
     parameter_ndim: int,
-    closure_index: int,
-    n_max_steps: int = -1,
 ) -> None:
-    """Run with pocoMC.
+    """Run pocoMC-based Preconditioned Monte Carlo sampling.
 
-    This function is based on PocoMC package (version 1.2.1).
-    pocoMC is a Preconditioned Monte Carlo (PMC) sampler that uses
-    normalizing flows to precondition the target distribution.
-
-    It draws heavily on the wrapper by Hendrick Roch, available at:
-    https://github.com/Hendrik1704/GPBayesTools-HIC/blob/0e41660fafaf1ea2beec3a141a9baa466f31e7c2/src/mcmc.py#L939
+    Args:
+        config: MC sampling configuration (includes output paths, closure_index).
+        emulation_config: Emulation configuration.
+        emulation_results: Trained emulator results, keyed by emulator group name.
+        experimental_results: Experimental data arrays.
+        parameter_min: Lower bounds for each parameter.
+        parameter_max: Upper bounds for each parameter.
+        parameter_ndim: Number of parameters.
     """
-    # Setup
-    import pocomc as pmc
-    import scipy.stats
+    import pocomc as pmc  # noqa: PLC0415
+    import scipy.stats  # noqa: PLC0415
 
-    # Validation
-    if n_max_steps < 0:
-        # n_max_steps (int): Maximum number of MCMC steps (default is max_steps=10*n_dim).
-        n_max_steps = 10 * parameter_ndim
+    sampler_settings: SamplerSettings = config.sampler_settings
 
-    # Additional possible function parameters, but for now, we don't need to pass it in.
-    # random_state (int or None): Initial random seed.
-    random_state = None
-    # pool (int): Number of processes to use for parallelization (default is ``pool=None``).
-    #     If ``pool`` is an integer greater than 1, a ``multiprocessing`` pool is created with the specified number of processes.
-    # pool = None
+    n_max_steps = 10 * parameter_ndim
 
-    # pocoMC config
-    pocoMC_config = PocoMCConfig(
-        analysis_name=config.analysis_name,
-        parameterization=config.parameterization,
-        analysis_config=config.analysis_config,
-        config_file=config.config_file,
-    )
-
-    # Setup the prior distributions
-    logging.info("Generate the prior class for pocoMC ...")
-    prior_distributions = []
-    for p_min, p_max in zip(parameter_min, parameter_max, strict=True):
-        # NOTE: Assuming uniform prior
-        # TODO: Need to update this for c1, c2, and c3, which is uniform in log space.
-        prior_distributions.append(scipy.stats.uniform(p_min, p_max))
+    # Build uniform prior distributions over parameter bounds
+    logger.info("Constructing prior distributions for pocoMC...")
+    prior_distributions = [
+        scipy.stats.uniform(p_min, p_max - p_min) for p_min, p_max in zip(parameter_min, parameter_max, strict=True)
+    ]
     prior = pmc.Prior(prior_distributions)
 
-    # Create and run the pocoMC sampler
-    # We can use multiprocessing in pocoMC to parallelize the calls to the particles
-    # NOTE: We need to use `spawn` rather than `fork` on linux. Otherwise, the some of the caching mechanisms
-    #       (eg. used in learning the emulator group mapping doesn't work)
-    # NOTE: We use `get_context` here to avoid having to globally specify the context. Plus, it then should be fine
-    #       to repeated call this function. (`set_context` can only be called once - otherwise, it's a runtime error).
-    # NOTE: I create the pool here rather than using the built-in one because I need to initialize the log_posterior!
-    # Persist the static covariance pieces once on the master before any worker process
-    # is created, so workers don't race on covariance_matrices.pkl.
-    log_posterior.save_covariance_matrices_for_plotting(experimental_results, emulation_config.output_dir)
-
+    # NOTE: We need to use `spawn` rather than `fork` on linux. Otherwise, some caching
+    #       mechanisms (e.g. used in learning the emulator group mapping) don't work.
+    # NOTE: We create the pool manually (rather than using pocoMC's built-in) so that we
+    #       can initialize log_posterior globals in each worker process.
     ctx = multiprocessing.get_context("spawn")
     with ctx.Pool(
         initializer=log_posterior.initialize_pool_variables,
@@ -91,106 +124,45 @@ def run_sampling(
             emulation_config,
             emulation_results,
             experimental_results,
-            emulator_cov_unexplained,
+            {},  # emulator_cov_unexplained: computed dynamically by predict() if needed
         ],
     ) as pool:
-        logging.info("Starting pocoMC ...")
+        logger.info("Starting pocoMC sampler...")
         sampler = pmc.Sampler(
             prior=prior,
-            # likelihood=self.log_likelihood,
-            # TODO: Need initialization function...
             likelihood=log_posterior.log_posterior,
             likelihood_kwargs={"set_to_infinite_outside_bounds": False},
-            n_effective=pocoMC_config.n_effective,
-            n_active=pocoMC_config.n_active,
-            n_prior=pocoMC_config.draw_n_prior_samples,
-            sample=pocoMC_config.sampler_type,
+            n_effective=sampler_settings.n_effective,
+            n_active=sampler_settings.n_active,
+            n_prior=sampler_settings.draw_n_prior_samples,
+            sample=sampler_settings.sampler_type,
             n_max_steps=n_max_steps,
-            random_state=random_state,
             vectorize=True,
             pool=pool,
         )
-        sampler.run(n_total=pocoMC_config.n_total_samples, n_evidence=pocoMC_config.n_importance_samples_for_evidence)
-
-    logging.info("Generate the posterior samples ...")
-    samples, weights, logl, logp = sampler.posterior()  # Weighted posterior samples
-
-    logging.info("Generate the evidence ...")
-    logz, logz_err = sampler.evidence()  # Bayesian model evidence estimate and uncertainty
-    logger.info(f"Log evidence: {logz}")
-    logger.info(f"Log evidence error: {logz_err}")
-
-    logging.info("Writing pocoMC chains to file...")
-    chain_data = {"chain": samples, "weights": weights, "logl": logl, "logp": logp, "logz": logz, "logz_err": logz_err}
-    with config.mcmc_outputfile.open("wb") as file:
-        pickle.dump(chain_data, file)
-
-
-class PocoMCConfig(common_base.CommonBase):
-    """Configuration class for pocoMC MCMC sampler."""
-
-    def __init__(
-        self, analysis_name="", parameterization="", analysis_config="", config_file="", closure_index=-1, **kwargs
-    ):
-        self.analysis_name = analysis_name
-        self.parameterization = parameterization
-        self.analysis_config = analysis_config
-        self.config_file = Path(config_file)
-
-        with self.config_file.open() as stream:
-            config = yaml.safe_load(stream)
-
-        self.observable_table_dir = config["observable_table_dir"]
-        self.observable_config_dir = config["observable_config_dir"]
-        self.observables_filename = config["observables_filename"]
-
-        """
-
-        """
-        # NOTE: Do not retrieve this conditionally - if we're asking for it, it's needed.
-        try:
-            mcmc_configuration = analysis_config["parameters"]["mcmc"]["pocoMC"]
-        except KeyError as e:
-            msg = "Please provide pocoMC configuration in the analysis configuration."
-            raise KeyError(msg) from e
-
-        # n_effective (int): The effective sample size maintained during the run (default is n_ess=1000).
-        # self.n_effective = mcmc_configuration.get("n_effective", 1000)
-        # 512 is the default from pocoMC
-        self.n_effective = mcmc_configuration.get("n_effective", 512)
-        # n_active (int): The number of active particles (default is n_active=250). It must be smaller than n_ess.
-        self.n_active = mcmc_configuration.get("n_active", 250)
-        # Validation
-        if self.n_active >= self.n_effective:
-            msg = f"n_active ({self.n_active}) must be smaller than n_effective ({self.n_effective})."
-            raise ValueError(msg)
-
-        # n_prior (int): Number of prior samples to draw (default is n_prior=2*(n_effective//n_active)*n_active).
-        self.draw_n_prior_samples = mcmc_configuration.get(
-            "draw_n_prior_samples", 2 * (self.n_effective // self.n_active) * self.n_active
+        sampler.run(
+            n_total=sampler_settings.n_total_samples,
+            n_evidence=sampler_settings.n_importance_samples_for_evidence,
         )
-        # sample (str): Type of MCMC sampler to use (default is sample="pcn").
-        #     Options are ``"pcn"`` (t-preconditioned Crank-Nicolson) or ``"rwm"`` (Random-walk Metropolis).
-        #     t-preconditioned Crank-Nicolson is the default and recommended sampler for PMC as it is more efficient and scales better with the number of parameters.
-        self.sampler_type = mcmc_configuration.get("sampler_type", "tpcn")
 
-        # n_total (int): The total number of effectively independent samples to be collected (default is n_total=5000).
-        # n_evidence (int): The number of importance samples used to estimate the evidence (default is n_evidence=5000).
-        #                     If n_evidence=0, the evidence is not estimated using importance sampling and the SMC estimate is used instead.
-        #                     If preconditioned=False, the evidence is estimated using SMC and n_evidence is ignored.
-        self.n_total_samples = mcmc_configuration.get("n_total_samples", 5000)
-        self.n_importance_samples_for_evidence = mcmc_configuration.get("n_importance_samples_for_evidence", 5000)
+    logger.info("Extracting posterior samples...")
+    samples, weights, logl, logp = sampler.posterior()
 
-        self.output_dir = Path(config["output_dir"]) / f"{analysis_name}_{parameterization}"
-        self.emulation_outputfile = Path(self.output_dir) / "emulation.pkl"
-        self.mcmc_outputfilename = "mcmc.h5"
-        if closure_index < 0:
-            self.mcmc_output_dir = Path(self.output_dir)
-        else:
-            self.mcmc_output_dir = Path(self.output_dir) / f"closure/results/{closure_index}"
-        self.mcmc_outputfile = Path(self.mcmc_output_dir) / "mcmc.h5"
-        self.sampler_outputfile = Path(self.mcmc_output_dir) / "mcmc_sampler.pkl"
+    logger.info("Estimating Bayesian evidence...")
+    logz, logz_err = sampler.evidence()
+    logger.info(f"Log evidence: {logz:.4f} +/- {logz_err:.4f}")
 
-        # Update formatting of parameter names for plotting
-        unformatted_names = self.analysis_config["parameterization"][self.parameterization]["names"]
-        self.analysis_config["parameterization"][self.parameterization]["names"] = [rf"{s}" for s in unformatted_names]
+    logger.info("Writing pocoMC results to file...")
+    chain_data = {
+        "chain": samples,
+        "weights": weights,
+        "logl": logl,
+        "logp": logp,
+        "logz": logz,
+        "logz_err": logz_err,
+    }
+    config.mcmc_output_dir.mkdir(exist_ok=True, parents=True)
+    with config.mcmc_outputfile.open("wb") as f:
+        pickle.dump(chain_data, f)
+
+    logger.info("Done.")
