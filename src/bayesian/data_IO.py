@@ -234,80 +234,99 @@ def _generate_pseudodata(prediction_data: np.ndarray, exp_uncertainty: np.ndarra
 # SYSTEMATIC UNCERTAINTY HELPER FUNCTIONS
 ####################################################################################################################
 
-def _parse_data_systematic_header(filepath):
+_COORDINATE_COLUMNS = {'xmin', 'xmax', 'y'}
+_STAT_COLUMN_ALIASES = ('stat', 'y_err_stat', 'y_err')
+
+
+def _strip_asymmetric_suffix(name):
+    """Strip trailing ',low' or ',high' from a column label, returning base name."""
+    if name.endswith(',low'):
+        return name[:-4]
+    if name.endswith(',high'):
+        return name[:-5]
+    return name
+
+
+def _parse_data_header(filepath):
     """
-    Parse systematic columns from data file header.
-    
-    Header format: # Label xmin xmax y y_err_stat sys_jec sys_taa ...
-    np.loadtxt sees: xmin(0) xmax(1) y(2) y_err_stat(3) sys_jec(4) sys_taa(5) ...
-    
-    Args:
-        filepath: Path to data file
-        
+    Parse the '# Label ...' header of a Data .dat file.
+
+    Supports two conventions for uncertainty columns:
+      - Symmetric:  a single column named e.g. 'y_err_stat', 'sys_jec'
+      - Asymmetric: a pair 'name,low' and 'name,high'; these are grouped under
+                    the shared base name 'name'
+
+    Coordinate columns (xmin, xmax, y) are skipped. Column indices are in the
+    numpy array produced by np.loadtxt (i.e. 'Label' token does not consume an
+    index).
+
     Returns:
-        Dict mapping systematic names to column indices
+        Dict mapping base_name → list of column indices (1 or 2 entries).
     """
-    systematic_columns = {}
-    
+    grouped = {}
     try:
         with open(filepath, 'r') as f:
             for line_num, line in enumerate(f):
-                if line.startswith('#') and any(col in line.lower() for col in ['label', 'xmin', 'xmax', 'y']):
-                    columns = line.strip('#').strip().split()
-                    
+                if line.startswith('#') and 'label' in line.lower() and 'xmin' in line.lower():
+                    tokens = line.strip('#').strip().split()
                     data_col_index = 0
-                    for col in columns:
-                        if col.lower() == 'label':
+                    for tok in tokens:
+                        lower = tok.lower()
+                        if lower == 'label':
                             continue
-                        
-                        if col.startswith('sys_'):
-                            systematic_columns[col] = data_col_index
-                        
+                        if lower in _COORDINATE_COLUMNS:
+                            data_col_index += 1
+                            continue
+                        base = _strip_asymmetric_suffix(tok)
+                        grouped.setdefault(base, []).append(data_col_index)
                         data_col_index += 1
                     break
-                    
+
                 if line_num > 10:
                     break
-                    
+
     except Exception as e:
         logger.warning(f"Could not parse header for {filepath}: {e}")
 
-    return systematic_columns
+    return grouped
 
 
-def _read_data_systematics(filepath, systematic_columns):
+def _read_grouped_columns(filepath, grouped_columns):
     """
-    Read systematic columns from Data file.
-    
-    Args:
-        filepath: Path to data file
-        systematic_columns: Dict of systematic names and column indices
-        
+    Read grouped columns from a Data file.
+
+    For each base name, loads the listed columns and reduces multi-column
+    entries (asymmetric low/high pairs) by elementwise maximum.
+
     Returns:
-        Dict of systematic name → array
+        Dict mapping base_name → 1D numpy array.
     """
-    if not systematic_columns:
+    if not grouped_columns:
         return {}
-    
+
     try:
         full_data = np.loadtxt(filepath, ndmin=2)
-        logger.debug(f"Reading systematics from {filepath}")
     except Exception as e:
         logger.error(f"Failed to load data from {filepath}: {e}")
         return {}
-    
-    systematic_data = {}
-    for sys_name, col_index in systematic_columns.items():
-        if col_index < full_data.shape[1]:
-            systematic_data[sys_name] = full_data[:, col_index]
-            logger.debug(f"  Read systematic '{sys_name}' from column {col_index}")
-        else:
+
+    result = {}
+    for base, indices in grouped_columns.items():
+        valid = [i for i in indices if i < full_data.shape[1]]
+        if not valid:
             logger.warning(
-                f"Systematic column {sys_name} at index {col_index} not found in {filepath} "
+                f"Column '{base}' at indices {indices} not in {filepath} "
                 f"(only {full_data.shape[1]} columns)"
             )
-    
-    return systematic_data
+            continue
+        if len(valid) == 1:
+            result[base] = full_data[:, valid[0]]
+        else:
+            stacked = np.stack([full_data[:, i] for i in valid], axis=0)
+            result[base] = np.max(stacked, axis=0)
+            logger.debug(f"  Reduced {len(valid)} columns for '{base}' via elementwise max")
+
+    return result
 
 def _read_theory_systematics(table_dir, model, observable_name, theory_systematics):
     """
@@ -1079,13 +1098,32 @@ def initialize_observables_dict_from_tables(
 
         if _accept_observable(analysis_config, filename):
 
-            # ORIGINAL: Read standard data
-            data = np.loadtxt(os.path.join(data_dir, filename), ndmin=2)
+            filepath = os.path.join(data_dir, filename)
+            data = np.loadtxt(filepath, ndmin=2)
             data_entry = {}
             data_entry['xmin'] = data[:,0]
             data_entry['xmax'] = data[:,1]
             data_entry['y'] = data[:,2]
-            data_entry['y_err_stat'] = data[:,3] 
+
+            # Parse header to discover stat / systematic columns. Supports both
+            # symmetric columns (e.g. 'y_err_stat', 'sys_jec') and asymmetric
+            # pairs (e.g. 'stat,low'+'stat,high'); pairs are reduced by max.
+            grouped_columns = _parse_data_header(filepath)
+            all_columns = _read_grouped_columns(filepath, grouped_columns)
+
+            y_err_stat = None
+            for alias in _STAT_COLUMN_ALIASES:
+                if alias in all_columns:
+                    y_err_stat = all_columns[alias]
+                    break
+            if y_err_stat is None:
+                # Header parsing failed or no recognized stat column -- fall back
+                # to the legacy convention of column index 3.
+                y_err_stat = data[:, 3]
+            data_entry['y_err_stat'] = y_err_stat
+
+            systematic_data = {k: v for k, v in all_columns.items()
+                               if k not in _STAT_COLUMN_ALIASES}
 
             observable_label, _ = _filename_to_labels(filename)
 
@@ -1098,13 +1136,13 @@ def initialize_observables_dict_from_tables(
             if external_stat_cov_file is not None and external_cov_file is None:
                 # Only load if global external cov is NOT set
                 n_bins = len(data_entry['y'])
-                
+
                 # Construct full path (resolve relative to table_dir)
                 if not os.path.isabs(external_stat_cov_file):
                     external_stat_cov_full_path = os.path.join(table_dir, external_stat_cov_file)
                 else:
                     external_stat_cov_full_path = external_stat_cov_file
-                
+
                 try:
                     external_stat_cov_matrix = _read_external_stat_covariance(
                         external_stat_cov_full_path, n_bins, observable_label
@@ -1116,21 +1154,18 @@ def initialize_observables_dict_from_tables(
             # Store in data_entry
             data_entry['external_stat_cov_file'] = external_stat_cov_file
             data_entry['external_stat_cov_matrix'] = external_stat_cov_matrix
-            
+
             if sys_data_list:
-                systematic_columns = _parse_data_systematic_header(os.path.join(data_dir, filename))
-                systematic_data = _read_data_systematics(os.path.join(data_dir, filename), systematic_columns)
-                
                 # Handle 'sum' configurations - check if this observable wants summed systematics
                 for sys_config in sys_data_list:
                     if sys_config.startswith('sum'):
                         # This observable wants summed systematics
                         logger.info(f"Observable '{observable_label}' requests summed systematics")
-                        
+
                         if systematic_data:
                             # Sum all available systematics in quadrature
                             summed_sys = _sum_systematics_quadrature(systematic_data)
-                            
+
                             # Replace individual systematics with single summed one
                             logger.info(f"  Replaced {len(systematic_data)} individual systematics with 1 summed systematic")
                             systematic_data = {'sum': summed_sys}
@@ -1138,10 +1173,10 @@ def initialize_observables_dict_from_tables(
                             logger.warning(f"  No systematic columns found to sum for '{observable_label}'")
                             # Create empty sum systematic to maintain structure
                             systematic_data = {}
-                        
+
                         # Only one 'sum' directive should exist per observable
                         break
-                
+
                 filtered_systematics = _filter_systematics_by_config(systematic_data, sys_data_list)
                 data_entry['systematics'] = filtered_systematics
             else:
