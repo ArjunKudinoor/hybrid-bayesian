@@ -255,7 +255,7 @@ def _loglikelihood(y, cov):
         msg = 'lapack dpotrf error: '
         msg += f'the {-info}-th argument had an illegal value'
         raise ValueError(msg)
-    if info < 0:
+    if info > 0:
         msg = 'lapack dpotrf error: '
         msg += f'the leading minor of order {info} is not positive definite'
         raise np.linalg.LinAlgError(msg)
