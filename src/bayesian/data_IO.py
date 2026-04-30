@@ -1287,6 +1287,15 @@ def initialize_observables_dict_from_tables(
                 for obs_key, cut_range in cuts.items():
                     if obs_key in observable_label:
                         x_min, x_max = cut_range
+                        # Conflict resolution note: keep the HEAD version. The
+                        # official/main 'fix-mask' patch (Raymond Ehlers 2026-03-24)
+                        # checks `isinstance(observables['Data'][observable_label], np.ndarray)`,
+                        # but that's the parent dict, not the per-key value, so the
+                        # isinstance is always False and the masking never runs. Our
+                        # version handles the same bug class (None / non-array values
+                        # like external_stat_cov_file=None and external_stat_cov_matrix=None)
+                        # by guarding on `hasattr(val, 'shape')` and dives into the
+                        # nested 'systematics' dict, which is the actually-correct fix.
                         obs_data = observables['Data'][observable_label]
                         mask = (x_min <= obs_data['xmin']) & (obs_data['xmax'] <= x_max)
                         prediction_values = prediction_values[mask, :]
