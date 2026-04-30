@@ -234,80 +234,99 @@ def _generate_pseudodata(prediction_data: np.ndarray, exp_uncertainty: np.ndarra
 # SYSTEMATIC UNCERTAINTY HELPER FUNCTIONS
 ####################################################################################################################
 
-def _parse_data_systematic_header(filepath):
+_COORDINATE_COLUMNS = {'xmin', 'xmax', 'y'}
+_STAT_COLUMN_ALIASES = ('stat', 'y_err_stat', 'y_err')
+
+
+def _strip_asymmetric_suffix(name):
+    """Strip trailing ',low' or ',high' from a column label, returning base name."""
+    if name.endswith(',low'):
+        return name[:-4]
+    if name.endswith(',high'):
+        return name[:-5]
+    return name
+
+
+def _parse_data_header(filepath):
     """
-    Parse systematic columns from data file header.
-    
-    Header format: # Label xmin xmax y y_err_stat sys_jec sys_taa ...
-    np.loadtxt sees: xmin(0) xmax(1) y(2) y_err_stat(3) sys_jec(4) sys_taa(5) ...
-    
-    Args:
-        filepath: Path to data file
-        
+    Parse the '# Label ...' header of a Data .dat file.
+
+    Supports two conventions for uncertainty columns:
+      - Symmetric:  a single column named e.g. 'y_err_stat', 'sys_jec'
+      - Asymmetric: a pair 'name,low' and 'name,high'; these are grouped under
+                    the shared base name 'name'
+
+    Coordinate columns (xmin, xmax, y) are skipped. Column indices are in the
+    numpy array produced by np.loadtxt (i.e. 'Label' token does not consume an
+    index).
+
     Returns:
-        Dict mapping systematic names to column indices
+        Dict mapping base_name → list of column indices (1 or 2 entries).
     """
-    systematic_columns = {}
-    
+    grouped = {}
     try:
         with open(filepath, 'r') as f:
             for line_num, line in enumerate(f):
-                if line.startswith('#') and any(col in line.lower() for col in ['label', 'xmin', 'xmax', 'y']):
-                    columns = line.strip('#').strip().split()
-                    
+                if line.startswith('#') and 'label' in line.lower() and 'xmin' in line.lower():
+                    tokens = line.strip('#').strip().split()
                     data_col_index = 0
-                    for col in columns:
-                        if col.lower() == 'label':
+                    for tok in tokens:
+                        lower = tok.lower()
+                        if lower == 'label':
                             continue
-                        
-                        if col.startswith('sys_'):
-                            systematic_columns[col] = data_col_index
-                        
+                        if lower in _COORDINATE_COLUMNS:
+                            data_col_index += 1
+                            continue
+                        base = _strip_asymmetric_suffix(tok)
+                        grouped.setdefault(base, []).append(data_col_index)
                         data_col_index += 1
                     break
-                    
+
                 if line_num > 10:
                     break
-                    
+
     except Exception as e:
         logger.warning(f"Could not parse header for {filepath}: {e}")
 
-    return systematic_columns
+    return grouped
 
 
-def _read_data_systematics(filepath, systematic_columns):
+def _read_grouped_columns(filepath, grouped_columns):
     """
-    Read systematic columns from Data file.
-    
-    Args:
-        filepath: Path to data file
-        systematic_columns: Dict of systematic names and column indices
-        
+    Read grouped columns from a Data file.
+
+    For each base name, loads the listed columns and reduces multi-column
+    entries (asymmetric low/high pairs) by elementwise maximum.
+
     Returns:
-        Dict of systematic name → array
+        Dict mapping base_name → 1D numpy array.
     """
-    if not systematic_columns:
+    if not grouped_columns:
         return {}
-    
+
     try:
         full_data = np.loadtxt(filepath, ndmin=2)
-        logger.debug(f"Reading systematics from {filepath}")
     except Exception as e:
         logger.error(f"Failed to load data from {filepath}: {e}")
         return {}
-    
-    systematic_data = {}
-    for sys_name, col_index in systematic_columns.items():
-        if col_index < full_data.shape[1]:
-            systematic_data[sys_name] = full_data[:, col_index]
-            logger.debug(f"  Read systematic '{sys_name}' from column {col_index}")
-        else:
+
+    result = {}
+    for base, indices in grouped_columns.items():
+        valid = [i for i in indices if i < full_data.shape[1]]
+        if not valid:
             logger.warning(
-                f"Systematic column {sys_name} at index {col_index} not found in {filepath} "
+                f"Column '{base}' at indices {indices} not in {filepath} "
                 f"(only {full_data.shape[1]} columns)"
             )
-    
-    return systematic_data
+            continue
+        if len(valid) == 1:
+            result[base] = full_data[:, valid[0]]
+        else:
+            stacked = np.stack([full_data[:, i] for i in valid], axis=0)
+            result[base] = np.max(stacked, axis=0)
+            logger.debug(f"  Reduced {len(valid)} columns for '{base}' via elementwise max")
+
+    return result
 
 def _read_theory_systematics(table_dir, model, observable_name, theory_systematics):
     """
@@ -645,7 +664,6 @@ def data_array_from_h5(
     correlation_manager_data = observables.get('correlation_manager', None)
     if correlation_manager_data is not None:
         try:
-            from systematic_correlation import SystematicCorrelationManager
             correlation_manager = SystematicCorrelationManager.from_dict(correlation_manager_data)
             logger.info("Using correlation-aware systematic handling")
             return _data_array_from_h5_with_correlations(
@@ -1054,6 +1072,21 @@ def initialize_observables_dict_from_tables(
     for obs_name, sys_data_list, sys_theory_list, external_stat_cov in parsed_observables:
         systematic_config_map[obs_name] = (sys_data_list, sys_theory_list, external_stat_cov)
 
+    def _lookup_systematic_config(file_obs_label):
+        """Find the YAML observable entry that matches a file-derived label.
+
+        The YAML uses short labels like '5020__PbPb__hadron__pt_ch_cms', while
+        the loader produces file-derived labels with centrality suffixes such as
+        '5020__PbPb__hadron__pt_ch_cms____0-5'. Match by substring containment
+        (same convention as ObservableFilter.accept_observable). When multiple
+        YAML keys are contained in the file label, prefer the longest one.
+        """
+        match = None
+        for cfg_key in systematic_config_map:
+            if cfg_key in file_obs_label and (match is None or len(cfg_key) > len(match)):
+                match = cfg_key
+        return systematic_config_map[match] if match is not None else ([], [], None)
+
     if external_cov_file:
         external_cov_path = os.path.join(table_dir, external_cov_file)
         external_cov = _read_external_covariance(external_cov_path)
@@ -1079,32 +1112,49 @@ def initialize_observables_dict_from_tables(
 
         if _accept_observable(analysis_config, filename):
 
-            # ORIGINAL: Read standard data
-            data = np.loadtxt(os.path.join(data_dir, filename), ndmin=2)
+            filepath = os.path.join(data_dir, filename)
+            data = np.loadtxt(filepath, ndmin=2)
             data_entry = {}
             data_entry['xmin'] = data[:,0]
             data_entry['xmax'] = data[:,1]
             data_entry['y'] = data[:,2]
-            data_entry['y_err_stat'] = data[:,3] 
+
+            # Parse header to discover stat / systematic columns. Supports both
+            # symmetric columns (e.g. 'y_err_stat', 'sys_jec') and asymmetric
+            # pairs (e.g. 'stat,low'+'stat,high'); pairs are reduced by max.
+            grouped_columns = _parse_data_header(filepath)
+            all_columns = _read_grouped_columns(filepath, grouped_columns)
+
+            y_err_stat = None
+            for alias in _STAT_COLUMN_ALIASES:
+                if alias in all_columns:
+                    y_err_stat = all_columns[alias]
+                    break
+            if y_err_stat is None:
+                # Header parsing failed or no recognized stat column -- fall back
+                # to the legacy convention of column index 3.
+                y_err_stat = data[:, 3]
+            data_entry['y_err_stat'] = y_err_stat
+
+            systematic_data = {k: v for k, v in all_columns.items()
+                               if k not in _STAT_COLUMN_ALIASES}
 
             observable_label, _ = _filename_to_labels(filename)
 
-            sys_data_list, sys_theory_list, external_stat_cov_file = systematic_config_map.get(
-                observable_label, ([], [], None)
-            )
+            sys_data_list, sys_theory_list, external_stat_cov_file = _lookup_systematic_config(observable_label)
 
             # Check if this observable has per-observable external stat cov
             external_stat_cov_matrix = None
             if external_stat_cov_file is not None and external_cov_file is None:
                 # Only load if global external cov is NOT set
                 n_bins = len(data_entry['y'])
-                
+
                 # Construct full path (resolve relative to table_dir)
                 if not os.path.isabs(external_stat_cov_file):
                     external_stat_cov_full_path = os.path.join(table_dir, external_stat_cov_file)
                 else:
                     external_stat_cov_full_path = external_stat_cov_file
-                
+
                 try:
                     external_stat_cov_matrix = _read_external_stat_covariance(
                         external_stat_cov_full_path, n_bins, observable_label
@@ -1116,21 +1166,18 @@ def initialize_observables_dict_from_tables(
             # Store in data_entry
             data_entry['external_stat_cov_file'] = external_stat_cov_file
             data_entry['external_stat_cov_matrix'] = external_stat_cov_matrix
-            
+
             if sys_data_list:
-                systematic_columns = _parse_data_systematic_header(os.path.join(data_dir, filename))
-                systematic_data = _read_data_systematics(os.path.join(data_dir, filename), systematic_columns)
-                
                 # Handle 'sum' configurations - check if this observable wants summed systematics
                 for sys_config in sys_data_list:
                     if sys_config.startswith('sum'):
                         # This observable wants summed systematics
                         logger.info(f"Observable '{observable_label}' requests summed systematics")
-                        
+
                         if systematic_data:
                             # Sum all available systematics in quadrature
                             summed_sys = _sum_systematics_quadrature(systematic_data)
-                            
+
                             # Replace individual systematics with single summed one
                             logger.info(f"  Replaced {len(systematic_data)} individual systematics with 1 summed systematic")
                             systematic_data = {'sum': summed_sys}
@@ -1138,10 +1185,10 @@ def initialize_observables_dict_from_tables(
                             logger.warning(f"  No systematic columns found to sum for '{observable_label}'")
                             # Create empty sum systematic to maintain structure
                             systematic_data = {}
-                        
+
                         # Only one 'sum' directive should exist per observable
                         break
-                
+
                 filtered_systematics = _filter_systematics_by_config(systematic_data, sys_data_list)
                 data_entry['systematics'] = filtered_systematics
             else:
@@ -1203,9 +1250,33 @@ def initialize_observables_dict_from_tables(
                     msg = f'{observable_label} not found in observables[Data]: {data_keys}'
                     raise ValueError(msg)
 
-                # Check that data and prediction have the same size
+                # Check that data and prediction have the same size.
+                # If the published data file covers more bins than the simulation predicts
+                # (typical when HEPData provides a wider pT range than the model can cover),
+                # drop the lowest-pT data bins to align. The convention is HEPData-sorted
+                # bins (ascending pT) and the prediction covering the high-pT tail.
                 data_size = observables['Data'][observable_label]['y'].shape[0]
                 prediction_size = prediction_values.shape[0]
+                if data_size > prediction_size:
+                    n_drop = data_size - prediction_size
+                    obs_data = observables['Data'][observable_label]
+                    kept_xmin = obs_data['xmin'][n_drop] if obs_data['xmin'].size > n_drop else None
+                    kept_xmax = obs_data['xmax'][-1] if obs_data['xmax'].size else None
+                    logger.info(
+                        f"Auto-aligning '{observable_label}': data has {data_size} bins, "
+                        f"prediction has {prediction_size}. Dropping the lowest-pT "
+                        f"{n_drop} data bin(s) to match (kept x range [{kept_xmin}, {kept_xmax}])."
+                    )
+                    for key, val in list(obs_data.items()):
+                        if hasattr(val, 'shape') and val.shape and val.shape[0] == data_size:
+                            obs_data[key] = val[n_drop:] if val.ndim == 1 else val[n_drop:, ...]
+                        elif isinstance(val, dict):
+                            # nested dicts (e.g. 'systematics'): trim per-systematic arrays
+                            for sk, sv in val.items():
+                                if hasattr(sv, 'shape') and sv.shape and sv.shape[0] == data_size:
+                                    val[sk] = sv[n_drop:]
+                    data_size = prediction_size
+
                 if data_size != prediction_size:
                     msg = f'({filename_prediction_values}) has different shape ({prediction_size}) than Data ({data_size}) -- before cuts.'
                     raise ValueError(msg)
@@ -1216,13 +1287,28 @@ def initialize_observables_dict_from_tables(
                 for obs_key, cut_range in cuts.items():
                     if obs_key in observable_label:
                         x_min, x_max = cut_range
-                        mask = (x_min <= observables['Data'][observable_label]['xmin']) & (observables['Data'][observable_label]['xmax'] <= x_max)
-                        prediction_values = prediction_values[mask,:]
-                        prediction_errors = prediction_errors[mask,:]
-                        for key in observables['Data'][observable_label].keys():
-                            # Can only mask if we're working with a np array
-                            if isinstance(observables['Data'][observable_label], np.ndarray):
-                                observables['Data'][observable_label][key] = observables['Data'][observable_label][key][mask]
+                        # Conflict resolution note: keep the HEAD version. The
+                        # official/main 'fix-mask' patch (Raymond Ehlers 2026-03-24)
+                        # checks `isinstance(observables['Data'][observable_label], np.ndarray)`,
+                        # but that's the parent dict, not the per-key value, so the
+                        # isinstance is always False and the masking never runs. Our
+                        # version handles the same bug class (None / non-array values
+                        # like external_stat_cov_file=None and external_stat_cov_matrix=None)
+                        # by guarding on `hasattr(val, 'shape')` and dives into the
+                        # nested 'systematics' dict, which is the actually-correct fix.
+                        obs_data = observables['Data'][observable_label]
+                        mask = (x_min <= obs_data['xmin']) & (obs_data['xmax'] <= x_max)
+                        prediction_values = prediction_values[mask, :]
+                        prediction_errors = prediction_errors[mask, :]
+                        n_data = obs_data['y'].shape[0]
+                        for key, val in list(obs_data.items()):
+                            if hasattr(val, 'shape') and val.shape and val.shape[0] == n_data:
+                                obs_data[key] = val[mask] if val.ndim == 1 else val[mask, ...]
+                            elif isinstance(val, dict):
+                                # nested dicts (e.g. 'systematics'): mask per-systematic arrays
+                                for sk, sv in val.items():
+                                    if hasattr(sv, 'shape') and sv.shape and sv.shape[0] == n_data:
+                                        val[sk] = sv[mask]
 
                 # Check that data and prediction have the same size
                 data_size = observables['Data'][observable_label]['y'].shape[0]
@@ -1242,7 +1328,7 @@ def initialize_observables_dict_from_tables(
                     design_points_to_exclude=design_points_to_exclude,
                 )
 
-                _, sys_theory_list, _ = systematic_config_map.get(observable_label, ([], [], None))
+                _, sys_theory_list, _ = _lookup_systematic_config(observable_label)
                 model_name = analysis_config.get('model_name', 'exponential')
                 theory_systematics = _read_theory_systematics(table_dir, model_name, observable_label, sys_theory_list)
                 filtered_theory_systematics = _filter_systematics_by_config(theory_systematics, sys_theory_list)
