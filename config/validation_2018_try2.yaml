@@ -1,0 +1,146 @@
+# Chunked-observable run in UNIT-SQUARE parameter space.
+# Design table is expected to contain unit coordinates (u1, u2).
+
+output_dir: '/Users/zhanj82/Desktop/JetScapeSTAT/Bayesian/results/validation_2018_try2'
+initialize_observables: True
+preprocess_input_data: True
+fit_emulators: True
+run_mcmc: True
+run_closure_tests: True
+
+plot:
+  input_data: True
+  covariance: True
+  emulators: True
+  mcmc: True
+  qhat: False
+  closure_tests: True
+  across_analyses: False
+
+debug_level: 0
+
+observable_table_dir: '/Users/zhanj82/Desktop/JetScapeSTAT/Bayesian/tables-hybrid'
+observable_config_dir: '/Users/zhanj82/Desktop/JetScapeSTAT/Bayesian/config' # Should be pointing at jetscape analysis config directory
+observables_filename: 'observables.h5'
+
+parameters:
+  preprocessing_parameters: &default_preprocessing_parameters
+    filtering:
+      enable: false
+      method: 'relative_statistical_error'
+      threshold: 0.03
+      problem_fraction_threshold: 0.0
+      min_design_points: 20
+      max_filtered_fraction: 0.6
+    smoothing:
+      enable: false
+      outlier_n_RMS: 5.0
+      interpolation_method: 'linear'
+      max_n_feature_outliers_to_interpolate: 2
+
+  emulator_parameters: &default_emulator_parameters
+    force_retrain: True
+    kernels:
+      active: ['matern', 'noise']
+      matern:
+        nu: 1.5
+        length_scale_bounds_factor: [0.01, 100]
+      noise:
+        type: 'white'
+        args:
+          noise_level: 0.25
+          noise_level_bounds: [0.0001, 1]
+    GPR:
+      n_restarts: 2
+      alpha: 1.e-10
+    cross_validation: False
+    cross_validation_k: 5
+    independent_validation: True
+
+  mcmc_parameters: &default_mcmc_parameters
+    n_walkers: 50
+    n_burn_steps: 500
+    n_sampling_steps: 5000
+    n_logging_steps: 20
+
+  closure: &default_closure_parameters
+    confidence: 0.9
+
+analysis_base: &model_base
+  model_name: 'Lres-E-loss'
+  parameterizations: ['Lres-E-loss']
+  sqrts_list: [5020]
+  centrality_range: [[0, 10]]
+  recoil_scheme: 'negative_recominber'
+  parameterization:
+    Lres-E-loss:
+      names: ['$u_{Lres}$', '$u_{kappa}$']
+      min: [0.0, 0.0]
+      max: [1.0, 1.0]
+  alpha: 0.2
+  validation_indices: [38, 39] # empty doesnt work, so I put the out of range
+
+  cuts:
+    'hadron__pt_': [10, 1000] #try 30 at some point
+
+analyses:
+  # Tag scheme:
+  #   :lhc5020              -> Glauber T_AA, shared across CMS+ATLAS (ALICE bundles into lumi_taa)
+  #   :cms / :atlas         -> per-experiment luminosity calibrations
+  #   :alice_jet_lumitaa    -> ALICE jet bundled lumi+T_AA (flat 2.8%), shared across R
+  #   (ALICE hadron sys,norm is dominantly TAA — joined to :lhc5020 below)
+  #   :atlas_<source>       -> 9 ATLAS-specific detector systematics, each shared across centrality
+  #   :<exp>_<obs>_sum      -> bundled bin-by-bin sys, shared across centrality (hadrons) or R (jets)
+  #   :alice_jet_corr       -> ALICE jet correlated bin-by-bin, shared across R (matches CMS treatment)
+  #   :alice_jet_R0X_unf    -> ALICE jet unfolding, per-R (response matrix and regularization differ)
+  correlation_groups:
+    default: '-1:1'   # full correlation across each group's bins (cor_length=-1, cor_strength=1.0)
+    atlas_unfolding: '5:0.95'   # TEST: exp decay with length 5 bins, strength 0.95
+
+  analysis_suppr_plus_zgtg_unit:
+    parameters:
+      preprocessing:
+        <<: *default_preprocessing_parameters
+      emulators:
+        default_group:
+          <<: *default_emulator_parameters
+          emulator_name: sk_learn
+          n_pc: 5
+          observable_list:
+            - observable: '5020__PbPb__hadron__pt_ch_cms'
+              sys_data: ['sys:cms_hadron_sum', 'sys,taa:lhc5020', 'sys,luminosity:cms']
+            - observable: '5020__PbPb__hadron__pt_ch_alice'
+              sys_data: ['sys:alice_hadron_sum', 'sys,norm:lhc5020']
+            - observable: '5020__PbPb__hadron__pt_ch_atlas'
+              sys_data:
+                - 'sys,track_selection:atlas_track_selection'
+                - 'sys,momentum_bias:atlas_momentum_bias'
+                - 'sys,track_particle_matching:atlas_track_matching'
+                - 'sys,particle_composition:atlas_particle_composition'
+                - 'sys,fake_secondary_tracks:atlas_fake_tracks'
+                - 'sys,pt_resolution:atlas_pt_resolution'
+                - 'sys,eta_resolution:atlas_eta_resolution'
+                - 'sys,unfolding:atlas_unfolding'
+                - 'sys,tracking_efficiency:atlas_tracking_efficiency'
+                - 'sys,luminosity:atlas'
+                - 'sys,taa:lhc5020'
+            # - observable: '5020__PbPb__hadron__pt_pi_alice'
+            #   sys_data: []
+            - observable: '5020__PbPb__inclusive_jet__pt_cms__R0.2'
+              sys_data: ['sys:cms_jet_sum', 'sys,taa:lhc5020', 'sys,luminosity:cms']
+            - observable: '5020__PbPb__inclusive_jet__pt_cms__R0.3'
+              sys_data: ['sys:cms_jet_sum', 'sys,taa:lhc5020', 'sys,luminosity:cms']
+            - observable: '5020__PbPb__inclusive_jet__pt_cms__R0.4'
+              sys_data: ['sys:cms_jet_sum', 'sys,taa:lhc5020', 'sys,luminosity:cms']
+            - observable: '5020__PbPb__inclusive_jet__pt_atlas__R0.4'
+              sys_data: ['sys:atlas_jet_sum', 'sys,taa:lhc5020', 'sys,luminosity:atlas']
+            - observable: '5020__PbPb__inclusive_jet__pt_alice__R0.2'
+              sys_data: ['sys,correlated:alice_jet_corr', 'sys,unfolding:alice_jet_R02_unf', 'sys,lumi_taa:lhc5020']
+            - observable: '5020__PbPb__inclusive_jet__pt_alice__R0.4'
+              sys_data: ['sys,correlated:alice_jet_corr', 'sys,unfolding:alice_jet_R04_unf', 'sys,lumi_taa:lhc5020']
+      mcmc:
+        <<: *default_mcmc_parameters
+      closure:
+        <<: *default_closure_parameters
+    <<: *model_base
+    plot_panel_shapes: [[3, 3], [3, 3], [3, 3], [3, 3], [3, 3], [3, 3]] # Maybe fix?

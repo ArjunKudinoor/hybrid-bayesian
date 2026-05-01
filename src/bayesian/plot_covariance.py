@@ -194,55 +194,48 @@ def _compute_systematic_group_covariances(
     """
     Compute individual group covariances using the SAME logic as create_systematic_covariance_matrix.
     """
+    from collections import defaultdict
+
     group_covariances = {}
 
+    # Mirror the merge-by-tag logic from
+    # SystematicCorrelationManager.create_systematic_covariance_matrix:
+    # within each tag, sum per-bin contributions across all base names (sources are
+    # treated as one shared underlying systematic), then form a single outer-product
+    # block over the union of bins.
     for group_tag, group_members in correlation_manager.correlation_groups.items():
         group_cov = np.zeros((n_features, n_features))
 
-        # Get unique systematics in this group
-        unique_systematics = list(set([sys_name for _, _, _, sys_name in group_members]))
-
-        for sys_full_name in unique_systematics:
+        bin_sigma_sq = defaultdict(float)
+        cor_length = correlation_manager.default_cor_length
+        cor_strength = correlation_manager.default_cor_strength
+        for obs_label, start, end, sys_full_name in group_members:
             if sys_full_name not in systematic_names:
                 continue
-
             sys_idx = systematic_names.index(sys_full_name)
             sys_info = correlation_manager.systematic_info.get(sys_full_name)
             if not sys_info:
                 continue
-
-            # Get all bins where this systematic appears
-            group_global_indices = []
-            for obs_label, start, end, sys_name in group_members:
-                if sys_name == sys_full_name:
-                    group_global_indices.extend(range(start, end))
-
-            # Build group-local mapping
-            global_to_group_local = {global_idx: local_idx for local_idx, global_idx in enumerate(group_global_indices)}
-
             cor_length = sys_info.cor_length
             cor_strength = sys_info.cor_strength
-            uncertainties = systematic_uncertainties[:, sys_idx]
+            col = systematic_uncertainties[:, sys_idx]
+            for b in range(start, end):
+                bin_sigma_sq[b] += float(col[b]) ** 2
 
-            # Apply correlation (SAME LOGIC as in create_systematic_covariance_matrix)
+        if bin_sigma_sq:
+            sorted_bins = sorted(bin_sigma_sq.keys())
+            idx = np.asarray(sorted_bins)
+            u = np.sqrt(np.asarray([bin_sigma_sq[b] for b in sorted_bins]))
+
             if cor_length == -1:
-                # Full correlation
-                for global_i in group_global_indices:
-                    for global_j in group_global_indices:
-                        group_cov[global_i, global_j] += uncertainties[global_i] * uncertainties[global_j]
+                block = np.outer(u, u)
             else:
-                # Exponential decay
-                for global_i in group_global_indices:
-                    for global_j in group_global_indices:
-                        if global_i == global_j:
-                            correlation = 1.0
-                        else:
-                            local_i = global_to_group_local[global_i]
-                            local_j = global_to_group_local[global_j]
-                            distance = abs(local_i - local_j)
-                            correlation = cor_strength * np.exp(-distance / cor_length)
-
-                        group_cov[global_i, global_j] += correlation * uncertainties[global_i] * uncertainties[global_j]
+                local = np.arange(len(idx))
+                distance = np.abs(local[:, None] - local[None, :])
+                correlation = cor_strength * np.exp(-distance / cor_length)
+                np.fill_diagonal(correlation, 1.0)
+                block = correlation * np.outer(u, u)
+            group_cov[np.ix_(idx, idx)] += block
 
         group_covariances[f"systematic_group_{group_tag}"] = group_cov
         logger.info(f"Systematic group '{group_tag}': variance {np.trace(group_cov):.2e}")

@@ -24,6 +24,29 @@ sns.set_context("paper", rc={"font.size": 18, "axes.titlesize": 18, "axes.labels
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------
+def _plot_label(plot_block: dict, legacy_key: str, *nested_path: str) -> str:
+    """
+    Read a plot label from the JETSCAPE-analysis observable block.
+
+    Supports two YAML conventions:
+      - Legacy flat: `<legacy_key>: "<text>"` directly under the observable block.
+      - New structured: the same text lives at `plot_block[<nested_path>...]`,
+        e.g. `data.AA.hepdata.ratio.y_axis.label`.
+
+    The legacy form takes precedence (cheap to read and what older configs use);
+    if absent we walk the nested path. Raises KeyError if neither form is present.
+    """
+    if legacy_key in plot_block:
+        return plot_block[legacy_key]
+    cur = plot_block
+    for k in nested_path:
+        if not isinstance(cur, dict) or k not in cur:
+            raise KeyError(f"Plot block has neither legacy key '{legacy_key}' nor nested path {'.'.join(nested_path)}")
+        cur = cur[k]
+    return cur
+
+
 def plot_observable_panels(
     plot_list,
     labels,
@@ -77,8 +100,11 @@ def plot_observable_panels(
         with plot_config_file.open() as stream:
             plot_config = yaml.safe_load(stream)
         plot_block = plot_config[observable_type][observable]
-        xtitle = rf"{latex_from_tlatex(plot_block['xtitle'])}"
-        ytitle = rf"{latex_from_tlatex(plot_block['ytitle_AA'])}"
+        # x-axis label: pT axis used for both pp spectra and AA ratio (RAA). The new
+        # structured format duplicates this under several places; pick `data.AA.hepdata.ratio`
+        # since that's the AA-side ratio plot we're rendering here.
+        xtitle = rf"{latex_from_tlatex(_plot_label(plot_block, 'xtitle', 'data', 'AA', 'hepdata', 'ratio', 'x_axis', 'label'))}"
+        ytitle = rf"{latex_from_tlatex(_plot_label(plot_block, 'ytitle_AA', 'data', 'AA', 'hepdata', 'ratio', 'y_axis', 'label'))}"
         if ylabel:
             ytitle = ylabel
 
