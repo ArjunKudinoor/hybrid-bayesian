@@ -85,7 +85,7 @@ def run_sampling(
         parameter_max: Upper bounds for each parameter.
         parameter_ndim: Number of parameters.
     """
-    sampler_settings: SamplerSettings = config.sampler_settings
+    sampler_settings: SamplerSettings = config.sampler_settings  # type: ignore[assignment]
 
     # NOTE: We need to use `spawn` rather than `fork` on linux. Otherwise, some caching
     #       mechanisms (e.g. used in learning the emulator group mapping) don't work.
@@ -148,7 +148,7 @@ def run_sampling(
             output_dict["autocorrelation_time"] = sampler.get_autocorr_time()
         except Exception as e:
             output_dict["autocorrelation_time"] = None
-            logger.info(f"Could not compute autocorrelation time: {e!s}")
+            logger.warning(f"Could not compute autocorrelation time:\n{e!s}")
 
         # For closure tests, save the design point parameters and pseudodata
         if config.closure_index >= 0:
@@ -179,7 +179,7 @@ def run_sampling(
         logger.info("Done.")
 
 
-class LoggingEnsembleSampler(emcee.EnsembleSampler):
+class LoggingEnsembleSampler(emcee.EnsembleSampler):  # type: ignore[misc]
     """emcee.EnsembleSampler with periodic acceptance-fraction logging."""
 
     def run_mcmc(

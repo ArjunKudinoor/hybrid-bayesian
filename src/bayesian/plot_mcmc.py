@@ -351,7 +351,9 @@ def _plot_design_observables(design, plot_dir, config):
     labels = ["JETSCAPE (design)"]
     colors = [sns.xkcd_rgb["dark sky blue"]]
     filename = "observables_design.pdf"
-    plot_utils.plot_observable_panels(plot_list, labels, colors, columns, config, plot_dir, filename, linewidth=1)
+    plot_utils.plot_observable_panels(
+        plot_list, labels, colors, columns, config.analysis_settings, plot_dir, filename, linewidth=1
+    )
 
 
 # ---------------------------------------------------------------
@@ -372,12 +374,11 @@ def _plot_posterior_observables(chain, plot_dir, config, n_samples=200):
     observables = data_IO.read_dict_from_h5(config.output_dir, config.observables_filename, verbose=False)
     # To get the results, we need to setup the emulation config
     emulation_config = emulation.EmulationConfig.from_config_file(
-        analysis_name=config.analysis_name,
-        parameterization=config.parameterization,
-        analysis_config=config.analysis_config,
-        config_file=config.config_file,
+        analysis_settings=config.analysis_settings,
     )
-    emulator_predictions = emulation.predict(posterior_samples, emulation_config=emulation_config)
+    emulator_predictions = emulation.predict(
+        posterior_samples, emulation_config=emulation_config, analysis_settings=config.analysis_settings
+    )
     emulator_predictions_dict = data_IO.observable_dict_from_matrix(
         emulator_predictions["central_value"], observables, observable_filter=emulation_config.observable_filter
     )
@@ -387,4 +388,6 @@ def _plot_posterior_observables(chain, plot_dir, config, n_samples=200):
     labels = ["JETSCAPE (posterior)"]
     colors = [sns.xkcd_rgb["dark sky blue"]]
     filename = "observables_posterior.pdf"
-    plot_utils.plot_observable_panels(plot_list, labels, colors, columns, config, plot_dir, filename, linewidth=1)
+    plot_utils.plot_observable_panels(
+        plot_list, labels, colors, columns, config.analysis_settings, plot_dir, filename, linewidth=1
+    )

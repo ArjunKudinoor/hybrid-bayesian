@@ -252,14 +252,15 @@ def _plot_single_parameter_observable_sensitivity(map_parameters, i_parameter, p
 
     # Get emulator predictions at the two points
     emulation_config = emulation.EmulationConfig.from_config_file(
-        analysis_name=config.analysis_name,
-        parameterization=config.parameterization,
-        analysis_config=config.analysis_config,
-        config_file=config.config_file,
+        analysis_settings=config.analysis_settings,
     )
     emulation_results = emulation_config.read_all_emulator_groups()
-    emulator_predictions_x = emulation.predict(x, emulation_config, emulator_results=emulation_results)
-    emulator_predictions_x_prime = emulation.predict(x_prime, emulation_config, emulator_results=emulation_results)
+    emulator_predictions_x = emulation.predict(
+        x, emulation_config, emulator_results=emulation_results, analysis_settings=config.analysis_settings
+    )
+    emulator_predictions_x_prime = emulation.predict(
+        x_prime, emulation_config, emulator_results=emulation_results, analysis_settings=config.analysis_settings
+    )
 
     # Convert to dict: emulator_predictions[observable_label]
     observables = data_IO.read_dict_from_h5(config.output_dir, "observables.h5", verbose=False)
@@ -296,7 +297,7 @@ def _plot_single_parameter_observable_sensitivity(map_parameters, i_parameter, p
         labels,
         colors,
         columns,
-        config,
+        config.analysis_settings,
         plot_dir,
         filename,
         linewidth=1,

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Optional
 
 import rich
 import rich.progress
@@ -23,7 +22,6 @@ logger = logging.getLogger(__name__)
 rich_console = Console()
 
 
-
 class RichModuleNameHandler(RichHandler):
     """Renders the module name instead of the log path."""
 
@@ -31,9 +29,9 @@ class RichModuleNameHandler(RichHandler):
         self,
         *,
         record: logging.LogRecord,
-        traceback: Optional[rich.traceback.Traceback],
-        message_renderable: "rich.console.ConsoleRenderable",
-    ) -> "rich.console.ConsoleRenderable":
+        traceback: rich.traceback.Traceback | None,
+        message_renderable: rich.console.ConsoleRenderable,
+    ) -> rich.console.ConsoleRenderable:
         """Render log for display.
 
         Args:
@@ -77,7 +75,8 @@ def progress_bar() -> rich.progress.Progress:
         "Elapsed:",
         rich.progress.TimeElapsedColumn(),
         console=rich_console,
-        refresh_per_second=1, speed_estimate_period=30,
+        refresh_per_second=1,
+        speed_estimate_period=30,
         expand=True,
     )
 

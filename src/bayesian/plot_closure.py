@@ -65,7 +65,7 @@ def plot(config):
     # Loop over all closure points
     for design_point_index in range(n_design_points):
         # Check if mcmc.h5 file exists
-        result_dir = os.path.join(config.output_dir, f"closure/results/{design_point_index}")
+        result_dir = os.path.join(config.analysis_settings.output_dir, f"closure/results/{design_point_index}")
         mcmc_outputfile = os.path.join(result_dir, "mcmc.h5")
         if not os.path.exists(mcmc_outputfile):
             logger.info(f"MCMC output does not exist: {mcmc_outputfile}")
@@ -83,7 +83,7 @@ def plot(config):
 
         # Plot qhat vs. T,E and return boolean array of whether target qhat is within credible interval
         # Then save relevant info to make summary plots over all closure points
-        qhat_plot_dir = os.path.join(config.output_dir, f"closure/results/{design_point_index}")
+        qhat_plot_dir = os.path.join(config.analysis_settings.output_dir, f"closure/results/{design_point_index}")
         qhat_closure_dict = plot_qhat.plot_qhat(
             posterior,
             qhat_plot_dir,
@@ -131,7 +131,7 @@ def plot(config):
             )
 
     # Create summary plots over all closure points
-    plot_dir = os.path.join(config.output_dir, "closure/summary_plots")
+    plot_dir = os.path.join(config.analysis_settings.output_dir, "closure/summary_plots")
     if not os.path.exists(plot_dir):
         os.makedirs(plot_dir)
 

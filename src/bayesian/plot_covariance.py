@@ -63,13 +63,15 @@ def plot_all_covariance_components(
     plot_dir.mkdir(exist_ok=True)
 
     # Load experimental data and setup
-    experimental_data = data_IO.data_array_from_h5(config.output_dir, config.observables_filename)
+    experimental_data = data_IO.data_array_from_h5(config.analysis_settings.output_dir, config.observables_filename)
 
     # Get emulator predictions at specified parameter point
     if parameter_point is None:
         # Use MAP estimate if available
         try:
-            results = data_IO.read_dict_from_h5(config.output_dir, config.mcmc_outputfilename, verbose=False)
+            results = data_IO.read_dict_from_h5(
+                config.analysis_settings.output_dir, config.mcmc_outputfilename, verbose=False
+            )
             chain = results["chain"]
             n_walkers, n_steps, n_params = chain.shape
             posterior = chain.reshape((n_walkers * n_steps, n_params))
@@ -127,7 +129,7 @@ def _extract_covariance_components(
     cov_components = {}
 
     # Try to load saved covariance matrices from MCMC
-    saved_cov_file = config.output_dir / "covariance_matrices.pkl"
+    saved_cov_file = config.analysis_settings.output_dir / "covariance_matrices.pkl"
     if saved_cov_file.exists():
         logger.info(f"Loading saved covariance matrices from {saved_cov_file}")
         import pickle
@@ -697,7 +699,7 @@ def plot(analysis_name: str, parameterization: str, analysis_config: dict[str, A
     # Run the plotting
     plot_all_covariance_components(
         config=mcmc_config,
-        output_dir=mcmc_config.output_dir,
+        output_dir=mcmc_config.analysis_settings.output_dir,
         parameter_point=None,  # Use MAP
         figsize=(20, 16),
         cmap="RdBu_r",

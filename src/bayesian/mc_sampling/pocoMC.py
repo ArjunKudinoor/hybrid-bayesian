@@ -100,7 +100,7 @@ def run_sampling(
     import pocomc as pmc  # noqa: PLC0415
     import scipy.stats  # noqa: PLC0415
 
-    sampler_settings: SamplerSettings = config.sampler_settings
+    sampler_settings: SamplerSettings = config.sampler_settings  # type: ignore[assignment]
 
     n_max_steps = 10 * parameter_ndim
 

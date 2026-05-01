@@ -139,11 +139,10 @@ def initialize_pool_variables(
 
     # Save to a separate file for plotting
     import pickle
-    from pathlib import Path
 
-    output_dir = Path(g_emulation_config.output_dir)
+    output_dir = g_emulation_config.analysis_settings.output_dir
     output_file = output_dir / "covariance_matrices.pkl"
-    with open(output_file, "wb") as f:
+    with output_file.open("wb") as f:
         pickle.dump(covariance_matrices, f)
     logger.info(f"Saved covariance matrices to {output_file}")
 
@@ -195,6 +194,7 @@ def log_posterior(X, *, set_to_infinite_outside_bounds: bool = True) -> npt.NDAr
         emulator_predictions = emulation.predict(
             X[inside],
             g_emulation_config,
+            analysis_settings=g_emulation_config.analysis_settings,
             emulator_results=g_emulation_results,
             emulator_additional_covariance=g_emulator_cov_unexplained,
         )

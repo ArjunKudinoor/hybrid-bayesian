@@ -7,7 +7,6 @@ Based in part on JETSCAPE/STAT code.
 
 import argparse
 import logging
-import os
 import shutil
 from pathlib import Path
 
@@ -80,7 +79,7 @@ class SteerAnalysis(common_base.CommonBase):
         if self.correlation_groups:
             logger.info(f"Loaded correlation_groups with {len(self.correlation_groups)} group tags")
 
-    def run_analysis(self) -> None:
+    def run_analysis(self) -> None:  # noqa: C901
         """Main steering function for analyses."""
         # Keep track of log and config for each run for reproducibility.
         if not self._reduce_logging_to_file:
@@ -179,7 +178,7 @@ class SteerAnalysis(common_base.CommonBase):
                         )
                         data_IO.write_dict_to_h5(
                             observables_smoothed,
-                            os.path.join(self.output_dir, f"{analysis_name}_{parameterization}"),
+                            str(self.output_dir / f"{analysis_name}_{parameterization}"),
                             filename="observables_preprocessed.h5",
                         )
                         progress.update(preprocess_task, advance=100, visible=False)
@@ -251,14 +250,17 @@ class SteerAnalysis(common_base.CommonBase):
                     logger.info(f"Plotting for {analysis_name} ({parameterization} parameterization)...")
                     logger.info("")
 
+                _plot_analysis_settings = analysis.AnalysisSettings.from_config_file(
+                    analysis_name=analysis_name,
+                    config_file=self.config_file,
+                    parameterization=parameterization,
+                )
+
                 if self.plot["input_data"]:
                     logger.info("------------------------------------------------------------------------")
                     logger.info(f"Plotting input data for {analysis_name}_{parameterization}...")
                     emulation_config = emulation.EmulationConfig.from_config_file(
-                        analysis_name=analysis_name,
-                        parameterization=parameterization,
-                        analysis_config=analysis_config,
-                        config_file=self.config_file,
+                        analysis_settings=_plot_analysis_settings,
                     )
                     plot_input_data.plot(emulation_config)
                     logger.info("Done!")
@@ -268,21 +270,13 @@ class SteerAnalysis(common_base.CommonBase):
                     logger.info("------------------------------------------------------------------------")
                     logger.info(f"Plotting emulators for {analysis_name}_{parameterization}...")
                     emulation_config = emulation.EmulationConfig.from_config_file(
-                        analysis_name=analysis_name,
-                        parameterization=parameterization,
-                        analysis_config=analysis_config,
-                        config_file=self.config_file,
+                        analysis_settings=_plot_analysis_settings
                     )
                     plot_emulation.plot(emulation_config)
                     logger.info("Done!")
                     logger.info("")
 
                 if self.plot["mcmc"] or self.plot["qhat"] or self.plot["closure_tests"]:
-                    _plot_analysis_settings = analysis.AnalysisSettings.from_config_file(
-                        analysis_name=analysis_name,
-                        config_file=self.config_file,
-                        parameterization=parameterization,
-                    )
                     _plot_mcmc_config = mcmc.MCConfig.from_config_file(
                         analysis_settings=_plot_analysis_settings,
                     )
@@ -319,7 +313,7 @@ class SteerAnalysis(common_base.CommonBase):
         if self.plot["across_analyses"]:
             # NOTE: This is a departure from the standard API, but we need a convention for how
             #       to pass multiple analyses, so we'll just go with it for now.
-            plot_analyses.plot(self.analyses, self.config_file, self.output_dir)
+            plot_analyses.plot(self.analyses, self.config_file, str(self.output_dir))
 
 
 def main() -> None:

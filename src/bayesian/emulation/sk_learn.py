@@ -220,7 +220,7 @@ def predict(
         One can easily construct a dict of predictions with format emulator_predictions[observable_label]
         from the returned matrix as follows (useful for plotting / troubleshooting):
         ```python
-        observables = data_IO.read_dict_from_h5(config.output_dir, 'observables.h5', verbose=False)
+        observables = data_IO.read_dict_from_h5(config.analysis_settings.output_dir, 'observables.h5', verbose=False)
         emulator_predictions = data_IO.observable_dict_from_matrix(
             emulator_central_value_reconstructed,
             observables,

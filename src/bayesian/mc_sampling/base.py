@@ -231,7 +231,7 @@ def credible_interval(
         ci = cil[ihpd], cih[ihpd]
     elif interval_type == "quantile":
         cred_range = [(1 - confidence) / 2, 1 - (1 - confidence) / 2]
-        ci = np.quantile(samples, cred_range)
+        ci = np.quantile(samples, cred_range)  # type: ignore[assignment]
     return ci
 
 

@@ -55,7 +55,7 @@ def plot_observable_panels(
     data = data_IO.data_dict_from_h5(config.output_dir, filename="observables.h5")  # type: ignore[no-untyped-call]
 
     # Group observables into subplots, with shapes specified in config
-    plot_panel_shapes = config.analysis_config["plot_panel_shapes"]
+    plot_panel_shapes = config.raw_analysis_config["plot_panel_shapes"]
     n_panels = sum(x[0] * x[1] for x in plot_panel_shapes)
     assert len(sorted_observable_list) <= n_panels, (
         f"You specified {n_panels} panels, but have {len(sorted_observable_list)} observables"
@@ -65,7 +65,7 @@ def plot_observable_panels(
     fig, axs = None, None
 
     # We will use the JETSCAPE-analysis config files for plotting metadata
-    plot_config_dir = config.observable_config_dir
+    plot_config_dir = config.io.observables_config_dir
 
     for i_observable, observable_label in enumerate(sorted_observable_list):
         sqrts, _system, observable_type, observable, _subobserable, _centrality = data_IO.observable_label_to_keys(  # type: ignore[no-untyped-call]

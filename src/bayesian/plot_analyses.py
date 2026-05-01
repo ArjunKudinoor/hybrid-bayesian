@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
@@ -15,13 +16,13 @@ import seaborn as sns
 
 sns.set_context("paper", rc={"font.size": 18, "axes.titlesize": 18, "axes.labelsize": 18})
 
-from bayesian import analysis, data_IO, plot_qhat
-from bayesian import mc_sampling as mcmc
+from bayesian import analysis, data_IO, plot_qhat  # noqa: E402
+from bayesian import mc_sampling as mcmc  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
 
-def plot(analyses: dict[str, Any], config_file: str, output_dir: str) -> None:
+def plot(analyses: dict[str, Any], config_file: Path, output_dir: str) -> None:
     """Plot across selected analyses
 
     :param dict[str, MCMCConfig] configs: dictionary of MCMCConfig objects, with keys corresponding to analysis names
@@ -51,7 +52,9 @@ def plot(analyses: dict[str, Any], config_file: str, output_dir: str) -> None:
             return
 
         # Get results from file
-        results[analysis_name] = data_IO.read_dict_from_h5(config.output_dir, config.mcmc_outputfilename, verbose=True)
+        results[analysis_name] = data_IO.read_dict_from_h5(
+            config.analysis_settings.output_dir, config.mcmc_outputfilename, verbose=True
+        )
         n_walkers, n_steps, n_params = results[analysis_name]["chain"].shape
         posteriors[analysis_name] = results[analysis_name]["chain"].reshape((n_walkers * n_steps, n_params))
 
