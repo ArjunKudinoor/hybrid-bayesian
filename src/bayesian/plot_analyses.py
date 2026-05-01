@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def plot(analyses: dict[str, Any], config_file: Path, output_dir: str) -> None:
     """Plot across selected analyses
 
-    :param dict[str, MCMCConfig] configs: dictionary of MCMCConfig objects, with keys corresponding to analysis names
+    :param dict[str, MCConfig] configs: dictionary of MCConfig objects, with keys corresponding to analysis names
 
     :return None: we save plots to disk
     """

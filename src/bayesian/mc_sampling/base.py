@@ -163,6 +163,10 @@ class MCConfig:
         return self.analysis_settings.io.observables_filename
 
     @property
+    def observable_table_dir(self) -> Path:
+        return self.analysis_settings.io.observables_table_dir
+
+    @property
     def confidence(self) -> float:
         return float(self.analysis_settings.raw_analysis_config.get("closure", {}).get("confidence", 0.9))
 

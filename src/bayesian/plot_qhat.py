@@ -27,7 +27,7 @@ def plot(config):
     Generate qhat plots, using data written to mcmc.h5 file in analysis step.
     If no file is found at expected location, no plotting will be done.
 
-    :param MCMCConfig config: we take an instance of MCMCConfig as an argument to keep track of config info.
+    :param MCConfig config: we take an instance of MCConfig as an argument to keep track of config info.
     """
 
     # Check if mcmc.h5 file exists
