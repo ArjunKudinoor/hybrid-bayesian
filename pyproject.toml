@@ -10,16 +10,14 @@ build-backend = "pdm.pep517.api"
 name = "jetscape-bayesian"
 description = "Analysis pipeline to implement Bayesian inference in high-energy physics "
 license = {text = "BSD-3-Clause"}
-# NOTE: <3.13 cap needed for tensorflow-io-gcs-filesystem
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.10"
 authors = [
   { name = "Raymond Ehlers", email = "raymond.ehlers@cern.ch" },
   { name = "Luna (Yi) Chen", email = "chen.yi.first@gmail.com" },
   { name = "Christal Martin", email = "cbaillar@vols.utk.edu" },
   { name = "Cameron Parker", email = "cameron.parker@tamu.edu" },
 ]
-# For hatch, need to remove the dependencies references here
-dynamic = ["dependencies", "optional-dependencies", "version"]
+dynamic = ["version"]
 dependencies = [
     # Data analysis and plotting
     "matplotlib >=3.5.2",
@@ -29,7 +27,7 @@ dependencies = [
     "seaborn >=0.11.2",
     "silx >=1.0.0",
     # Emulator training
-    "gpflow >=2.5.2",
+    # "gpflow >=2.5.2",
     "pymc >=4.0.0",
     "scikit-learn >=1.1.1",
     "emcee>=3.1.4",
@@ -39,14 +37,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+test = [
+    "pytest >=6.2.4",
+    "pytest-cov >=3",
+    "pytest-sugar >=0.9.5",
+]
 dev = [
     "ruff >=0.0.209",
-    "black >=22.1.0",
     "mypy>=1.13.0",
     "ipython >=8.0",
     "ipykernel >=6.15.1",
     "pytest >=7.4.0",
     "pocoMC >=1.2.2",
+    "ipython>=8.37.0",
 ]
 
 [tool.hatch]
@@ -94,6 +97,8 @@ exclude = [
     'dist',
 ]
 line-length = 120
+
+[tool.ruff.lint]
 select = [
     "E", "F", "W", # flake8
     "C901",        # mccabe
@@ -131,15 +136,17 @@ unfixable = [
     "T20",      # flake8-print
     "F841",     # Removes unused variables
 ]
+# Allow for characters that could be confused (per ruff)
+allowed-confusables = ["σ", "ρ", "×"]
 
-[tool.ruff.mccabe]
+[tool.ruff.lint.mccabe]
 max-complexity = 12
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 known-first-party = []
 
 [tool.pylint]
-master.py-version = "3.9"
+master.py-version = "3.10"
 master.ignore-paths= []
 reports.output-format = "colorized"
 similarities.ignore-imports = "yes"

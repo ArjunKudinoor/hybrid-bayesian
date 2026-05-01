@@ -49,6 +49,7 @@ parameters:
   #-------------------------------------------
   # Emulator parameters
   emulator_parameters: &default_emulator_parameters
+    emulator_package: "sk_learn"
 
     force_retrain: False
     n_pc: 10

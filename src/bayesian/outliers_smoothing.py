@@ -1,4 +1,4 @@
-""" Functionality for identifying outliers and smoothing them.
+"""Functionality for identifying outliers and smoothing them.
 
 DESIGN POINT FILTERING (Phase 1):
 ===================================
@@ -42,19 +42,20 @@ USAGE:
     filtered_observables, filtered_points = filter_problematic_design_points(
         observables, filtering_config, prediction_key='Prediction'
     )
-    
+
     # Phase 2: Smooth remaining outliers
     smoothed_values, smoothed_errors, removed_outliers = find_and_smooth_outliers_standalone(
         observable_key, bin_centers, values, y_err, outliers_config
     )
 
+.. codeauthor:: Raymond Ehlers <raymond.ehlers@cern.ch>, LBL/UCB
 .. codeauthor:: Jingyu Zhang <jingyu.zhang@cern.ch>, Vanderbilt
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Tuple, Any
+from typing import Any
 
 import attrs
 import numpy as np
@@ -66,13 +67,15 @@ logger = logging.getLogger(__name__)
 
 IMPLEMENTED_INTERPOLATION_METHODS = ["linear", "cubic_spline"]
 
+
 @attrs.frozen
 class OutliersConfig:
     """Configuration for identifying outliers.
 
     :param float n_RMS: Number of RMS away from the value to identify as an outlier. Default: 2.
     """
-    n_RMS: float = 2.
+
+    n_RMS: float = 2.0
 
 
 def find_large_statistical_uncertainty_points(
@@ -108,9 +111,7 @@ def find_outliers_based_on_central_values(
     # NOTE: We need abs because we don't care about the sign - we just want a measure.
     diff_between_features = np.abs(np.diff(values, axis=0))
     rms = np.sqrt(np.mean(diff_between_features**2, axis=-1))
-    outliers_in_diff_mask = (
-        diff_between_features > (outliers_config.n_RMS * rms[:, np.newaxis])
-    )
+    outliers_in_diff_mask = diff_between_features > (outliers_config.n_RMS * rms[:, np.newaxis])
     """
     Now, we need to associate the outliers with the original feature index (ie. taking the diff reduces by one)
 
@@ -124,7 +125,7 @@ def find_outliers_based_on_central_values(
     output[1:-1, :] = outliers_in_diff_mask[:-1, :] & outliers_in_diff_mask[1:, :]
 
     # Convenient breakpoint for debugging of high values
-    #if np.any(values > 1.05):
+    # if np.any(values > 1.05):
     #    logger.info(f"{values=}")
 
     # Now, handle the edges. Here, we need to select the 1th and -2th points
@@ -135,9 +136,7 @@ def find_outliers_based_on_central_values(
         # Now, we'll repeat the calculation with the diff and rMS
         diff_between_features_for_edges = np.abs(np.diff(values[s, :], axis=0))
         rms = np.sqrt(np.mean(diff_between_features_for_edges**2, axis=-1))
-        outliers_in_diff_mask_edges = (
-            diff_between_features_for_edges > (outliers_config.n_RMS * rms[:, np.newaxis])
-        )
+        outliers_in_diff_mask_edges = diff_between_features_for_edges > (outliers_config.n_RMS * rms[:, np.newaxis])
         output[0, :] = outliers_in_diff_mask_edges[0, :] & outliers_in_diff_mask[0, :]
         output[-1, :] = outliers_in_diff_mask_edges[-1, :] & outliers_in_diff_mask[-1, :]
     else:
@@ -155,7 +154,7 @@ def perform_QA_and_reformat_outliers(
     outliers: tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]],
     smoothing_max_n_feature_outliers_to_interpolate: int,
 ) -> tuple[dict[int, list[int]], dict[str, dict[int, set[int]]]]:
-    """ Perform QA on identifier outliers, and reformat them for next steps.
+    """Perform QA on identifier outliers, and reformat them for next steps.
 
     :param observable_key: The key for the observable we're looking at.
     :param outliers: The outliers provided by the outlier finder.
@@ -173,29 +172,31 @@ def perform_QA_and_reformat_outliers(
     #       that we've using for this analysis. To actually use them (ie. in print outs), we'll
     #       need to apply them to the actual design point array.
     outlier_features_per_design_point: dict[int, set[int]] = {v: set() for v in outliers[1]}
-    for i_feature, design_point in zip(*outliers):
+    for i_feature, design_point in zip(*outliers, strict=True):
         outlier_features_per_design_point[design_point].update([i_feature])
     # These features must be sorted to finding distances between them, but sets are unordered,
     # so we need to explicitly sort them
-    for design_point in outlier_features_per_design_point:
-        outlier_features_per_design_point[design_point] = sorted(outlier_features_per_design_point[design_point])  # type: ignore[assignment]
+    for design_point, v in outlier_features_per_design_point.items():
+        outlier_features_per_design_point[design_point] = sorted(v)  # type: ignore[assignment]
 
     # Since the feature values of one design point shouldn't impact another, we'll want to
     # check one design point at a time.
     # NOTE: If we have to skip, we record the design point so we can consider excluding it due
     #       to that observable.
     outlier_features_to_interpolate_per_design_point: dict[int, list[int]] = {}
-    #logger.info(f"{observable_key=}, {outlier_features_per_design_point=}")
+    # logger.info(f"{observable_key=}, {outlier_features_per_design_point=}")
     for k, v in outlier_features_per_design_point.items():
-        #logger.debug("------------------------")
-        #logger.debug(f"{k=}, {v=}")
+        # logger.debug("------------------------")
+        # logger.debug(f"{k=}, {v=}")
         # Calculate the distance between the outlier indices
         distance_between_outliers = np.diff(list(v))
         # And we'll keep track of which ones pass our quality requirements (not too many in a row).
         indices_of_outliers_that_are_one_apart = set()
         accumulated_indices_to_remove = set()
 
-        for distance, lower_feature_index, upper_feature_index in zip(distance_between_outliers, list(v)[:-1], list(v)[1:]):
+        for distance, lower_feature_index, upper_feature_index in zip(
+            distance_between_outliers, list(v)[:-1], list(v)[1:], strict=True
+        ):
             # We're only worried about points which are right next to each other
             if distance == 1:
                 indices_of_outliers_that_are_one_apart.update([lower_feature_index, upper_feature_index])
@@ -226,17 +227,19 @@ def perform_QA_and_reformat_outliers(
                 indices_of_outliers_that_are_one_apart = set()
         # There are indices left over at the end of the loop which we need to take care of.
         # eg. If all points are considered outliers
-        if indices_of_outliers_that_are_one_apart and \
-            len(indices_of_outliers_that_are_one_apart) > smoothing_max_n_feature_outliers_to_interpolate:
+        if (
+            indices_of_outliers_that_are_one_apart
+            and len(indices_of_outliers_that_are_one_apart) > smoothing_max_n_feature_outliers_to_interpolate
+        ):
             # Since we are looking at the distances, we want to remove the points that make up that distance.
-            #logger.info(f"Ended on {indices_of_outliers_that_are_one_apart=}")
+            # logger.info(f"Ended on {indices_of_outliers_that_are_one_apart=}")
             accumulated_indices_to_remove.update(indices_of_outliers_that_are_one_apart)
 
         # Now that we've determine which points we want to remove from our interpolation (accumulated_indices_to_remove),
         # let's actually remove them from our list.
         # NOTE: We sort again because sets are not ordered.
         outlier_features_to_interpolate_per_design_point[k] = sorted(set(v) - accumulated_indices_to_remove)
-        #logger.debug(f"design point {k}: features kept for interpolation: {outlier_features_to_interpolate_per_design_point[k]}")
+        # logger.debug(f"design point {k}: features kept for interpolation: {outlier_features_to_interpolate_per_design_point[k]}")
 
         # And we'll keep track of what we can't interpolate
         if accumulated_indices_to_remove:
@@ -256,7 +259,7 @@ def find_and_smooth_outliers_standalone(
     smoothing_interpolation_method: str,
     max_n_points_to_interpolate: int,
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], dict[int, set[int]]]:
-    """ A standalone function to identify outliers and smooth them.
+    """A standalone function to identify outliers and smooth them.
 
     Careful: If you remove design points, you'll need to make sure to keep careful track of the indices!
 
@@ -284,7 +287,7 @@ def find_and_smooth_outliers_standalone(
             raise ValueError(msg)
     if len(bin_centers) == 1:
         # Skip - we can't interpolate one point.
-        msg = f"Skipping observable \"{observable_key}\" because it has only one point."
+        msg = f'Skipping observable "{observable_key}" because it has only one point.'
         logger.debug(msg)
         raise ValueError(msg)
 
@@ -294,7 +297,7 @@ def find_and_smooth_outliers_standalone(
     y_err = np.array(y_err, copy=True)
 
     # Identify outliers
-    #outliers = (np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64))
+    # outliers = (np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64))
     outliers = np.zeros((0, 2), dtype=np.int64)
     for outlier_identification_method, outliers_config in outliers_identification_methods.items():
         # First, find the outliers based on the selected method
@@ -322,18 +325,20 @@ def find_and_smooth_outliers_standalone(
         outliers = np.unique(combined_indices, axis=0)
 
     # If needed, can split outliers back into the two arrays
-    #outliers_feature_indices, outliers_design_point_indices = outliers[:, 0], outliers[:, 0]
-    outlier_features_to_interpolate_per_design_point, _intermediate_outliers_we_are_unable_to_remove = perform_QA_and_reformat_outliers(
-        observable_key=observable_key,
-        outliers=(outliers[:, 0], outliers[:, 1]),
-        smoothing_max_n_feature_outliers_to_interpolate=max_n_points_to_interpolate,
+    # outliers_feature_indices, outliers_design_point_indices = outliers[:, 0], outliers[:, 0]
+    outlier_features_to_interpolate_per_design_point, _intermediate_outliers_we_are_unable_to_remove = (
+        perform_QA_and_reformat_outliers(
+            observable_key=observable_key,
+            outliers=(outliers[:, 0], outliers[:, 1]),
+            smoothing_max_n_feature_outliers_to_interpolate=max_n_points_to_interpolate,
+        )
     )
     # And keep track of them
     outliers_we_are_unable_to_remove.update(_intermediate_outliers_we_are_unable_to_remove.get(observable_key, {}))
 
     # Perform interpolation
     for v in [values, y_err]:
-        #logger.info(f"Method: {outlier_identification_method}, Interpolating outliers with {outlier_features_to_interpolate_per_design_point=}, {key_type=}, {observable_key=}, {prediction_key=}")
+        # logger.info(f"Method: {outlier_identification_method}, Interpolating outliers with {outlier_features_to_interpolate_per_design_point=}, {key_type=}, {observable_key=}, {prediction_key=}")
         for design_point, points_to_interpolate in outlier_features_to_interpolate_per_design_point.items():
             try:
                 interpolated_values = perform_interpolation_on_values(
@@ -345,7 +350,7 @@ def find_and_smooth_outliers_standalone(
                 # And assign the interpolated values
                 v[points_to_interpolate, design_point] = interpolated_values
             except CannotInterpolateDueToOnePointError as e:
-                msg = f"Skipping observable \"{observable_key}\", {design_point=} because {e}"
+                msg = f'Skipping observable "{observable_key}", {design_point=} because {e}'
                 logger.info(msg)
                 # And add to the list since we can't make it work.
                 if design_point not in outliers_we_are_unable_to_remove:
@@ -356,9 +361,8 @@ def find_and_smooth_outliers_standalone(
     return values, y_err, outliers_we_are_unable_to_remove
 
 
-
 class CannotInterpolateDueToOnePointError(Exception):
-    """ Error raised when we can't interpolate due to only one point. """
+    """Error raised when we can't interpolate due to only one point."""
 
 
 def perform_interpolation_on_values(
@@ -367,7 +371,7 @@ def perform_interpolation_on_values(
     points_to_interpolate: list[int],
     smoothing_interpolation_method: str,
 ) -> npt.NDArray[np.float64]:
-    """ Perform interpolation on the requested points to interpolate.
+    """Perform interpolation on the requested points to interpolate.
 
     Args:
         bin_centers: The bin centers for the observable.
@@ -377,7 +381,7 @@ def perform_interpolation_on_values(
             ["linear", "cubic_spline"].
 
     Returns:
-        The values that are interpolated at points_to_interpolate. They cna be inserted into the
+        The values that are interpolated at points_to_interpolate. They can be inserted into the
             original values_to_interpolate array via `values_to_interpolate[points_to_interpolate] = interpolated_values`.
 
     Raises:
@@ -423,13 +427,15 @@ def perform_interpolation_on_values(
 
     return interpolated_values
 
+
 @attrs.frozen
 class FilteringConfig:
     """Configuration for filtering (permanent removal) of design points.
-    
+
     This is different from OutliersConfig which smooths/interpolates outliers.
     Filtering removes entire design points when they have too many bad features.
     """
+
     method: str = "relative_statistical_error"  # 'relative_statistical_error', 'absolute_statistical_error'
     threshold: float = 0.5  # Threshold value
     min_design_points: int = 50  # Safety: minimum design points to keep
@@ -442,39 +448,40 @@ def identify_high_uncertainty_points_absolute_threshold(
     uncertainties: npt.NDArray[np.float64],
     method: str,
     threshold: float,
-) -> Tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
+) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
     """
     Identify high uncertainty points using absolute thresholds.
-    
+
     Complements existing RMS-based outlier detection with absolute threshold option.
-    
+
     Args:
         values: Observable values, shape (n_bins, n_design_points)
         uncertainties: Statistical uncertainties, shape (n_bins, n_design_points)
         method: 'relative_statistical_error' or 'absolute_statistical_error'
         threshold: Absolute threshold value
-        
+
     Returns:
         (feature_indices, design_point_indices) matching existing function signature
-        
+
     Note:
         Return format matches existing find_large_statistical_uncertainty_points()
         which returns (n_feature_index, n_design_point_index)
     """
     if method == "relative_statistical_error":
         # Filter where |σ / y| > threshold
-        with np.errstate(divide='ignore', invalid='ignore'):
+        with np.errstate(divide="ignore", invalid="ignore"):
             relative_error = np.abs(uncertainties / values)
             relative_error[~np.isfinite(relative_error)] = 0
         mask = relative_error > threshold
-        
+
     elif method == "absolute_statistical_error":
         # Filter where |σ| > threshold
         mask = np.abs(uncertainties) > threshold
-        
+
     else:
-        raise ValueError(f"Unknown filtering method: {method}")
-    
+        msg = f"Unknown filtering method: {method}"
+        raise ValueError(msg)
+
     # np.where returns (row_indices, col_indices)
     # For shape (n_bins, n_design_points): rows=features, cols=design_points
     feature_indices, design_point_indices = np.where(mask)
@@ -482,78 +489,78 @@ def identify_high_uncertainty_points_absolute_threshold(
 
 
 def identify_design_points_to_filter(
-    observables: Dict[str, Any],
+    observables: dict[str, Any],
     config: FilteringConfig,
     prediction_key: str = "Prediction",
-) -> List[int]:
+) -> list[int]:
     """
     Identify design points that should be completely removed.
-    
-    A design point (row in prediction matrix) is marked for removal if it has 
+
+    A design point (row in prediction matrix) is marked for removal if it has
     too many problematic features (columns) across all observables.
-    
+
     Args:
         observables: Observables dictionary
         config: FilteringConfig with filtering parameters
         prediction_key: 'Prediction' or 'Prediction_validation'
-        
+
     Returns:
         List of design point indices (row indices) to remove
     """
     # Count problematic features per design point
-    design_point_problem_count: Dict[int, int] = {}
-    total_features_per_design_point: Dict[int, int] = {}
-    
-    for obs_label, obs_data in observables[prediction_key].items():
-        values = obs_data['y']  # shape: (n_bins, n_design_points)
-        uncertainties = obs_data['y_err_stat']  # shape: (n_bins, n_design_points)
-        n_bins, n_design_points = values.shape
-        
+    design_point_problem_count: dict[int, int] = {}
+    total_features_per_design_point: dict[int, int] = {}
+
+    for obs_label, obs_data in observables[prediction_key].items():  # noqa: B007
+        values = obs_data["y"]  # shape: (n_bins, n_design_points)
+        uncertainties = obs_data["y_err_stat"]  # shape: (n_bins, n_design_points)
+        n_bins, _n_design_points = values.shape
+
         # Identify problematic points
-        feature_indices, design_point_indices = identify_high_uncertainty_points_absolute_threshold(
+        _feature_indices, design_point_indices = identify_high_uncertainty_points_absolute_threshold(
             values, uncertainties, config.method, config.threshold
         )
-        
+
         # Count problems per design point
         for dp_idx in design_point_indices:
             design_point_problem_count[dp_idx] = design_point_problem_count.get(dp_idx, 0) + 1
             total_features_per_design_point[dp_idx] = total_features_per_design_point.get(dp_idx, 0) + n_bins
-    
+
     # Determine which design points to filter
     design_points_to_filter = []
-    for dp_idx in design_point_problem_count.keys():
-        problem_fraction = design_point_problem_count[dp_idx] / total_features_per_design_point[dp_idx]
+    for dp_idx, count in design_point_problem_count.items():
+        problem_fraction = count / total_features_per_design_point[dp_idx]
         if problem_fraction > config.problem_fraction_threshold:
             design_points_to_filter.append(dp_idx)
             logger.debug(
-                f"Design point {dp_idx}: {design_point_problem_count[dp_idx]}/{total_features_per_design_point[dp_idx]} "
+                f"Design point {dp_idx}: {count}/{total_features_per_design_point[dp_idx]} "
                 f"({problem_fraction:.1%}) features problematic"
             )
-    
+
     design_points_to_filter = sorted(design_points_to_filter)
-    
+
     # Safety checks
     if not design_points_to_filter:
         return []
-    
-    n_total = next(iter(observables[prediction_key].values()))['y'].shape[1]
+
+    n_total = next(iter(observables[prediction_key].values()))["y"].shape[1]
     n_filtered = len(design_points_to_filter)
     filtered_fraction = n_filtered / n_total if n_total > 0 else 0
-    
+
     if filtered_fraction > config.max_filtered_fraction:
         logger.warning(
             f"Filtering would remove {filtered_fraction:.1%} of design points "
             f"(limit: {config.max_filtered_fraction:.1%}). Filtering disabled for safety."
         )
         return []
-    
+
     if n_total - n_filtered < config.min_design_points:
         logger.warning(
             f"Filtering would leave only {n_total - n_filtered} design points "
             f"(minimum: {config.min_design_points}). Filtering disabled for safety."
         )
         return []
-    
+
     logger.info(
         f"Identified {n_filtered}/{n_total} design points for filtering ({filtered_fraction:.1%}): "
         f"{design_points_to_filter}"
@@ -561,32 +568,32 @@ def identify_design_points_to_filter(
     return design_points_to_filter
 
 
-def apply_design_point_filtering(
-    observables: Dict[str, Any],
-    design_points_to_filter: List[int],
+def apply_design_point_filtering(  # noqa: C901
+    observables: dict[str, Any],
+    design_points_to_filter: list[int],
     prediction_key: str = "Prediction",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Apply design point filtering to observables dictionary.
-    
+
     This removes columns from the prediction arrays (axis=1).
     Design points are stored as columns in the raw format.
-    
+
     Args:
         observables: Input observables dictionary
         design_points_to_filter: List of design point indices (column indices) to remove
         prediction_key: 'Prediction' or 'Prediction_validation'
-        
+
     Returns:
         Filtered observables dictionary
     """
     if not design_points_to_filter:
         return observables
-    
+
     logger.info(f"Applying filtering to {prediction_key}: removing {len(design_points_to_filter)} design points")
-    
+
     filtered_observables = {}
-    
+
     # Copy everything EXCEPT the keys we're explicitly filtering
     keys_to_filter = [prediction_key]
     if prediction_key == "Prediction":
@@ -594,10 +601,10 @@ def apply_design_point_filtering(
     elif prediction_key == "Prediction_validation":
         keys_to_filter.extend(["Design_validation", "Design_indices_validation"])
 
-    for key in observables:
+    for key, val in observables.items():
         if key not in keys_to_filter:
-            filtered_observables[key] = observables[key] 
-    
+            filtered_observables[key] = val
+
     # Determine which Design/Design_indices keys to filter
     if prediction_key == "Prediction":
         design_key = "Design"
@@ -606,17 +613,18 @@ def apply_design_point_filtering(
         design_key = "Design_validation"
         indices_key = "Design_indices_validation"
     else:
-        raise ValueError(f"Unknown prediction_key: {prediction_key}")
-    
+        msg = f"Unknown prediction_key: {prediction_key}"
+        raise ValueError(msg)
+
     # Filter Prediction arrays
     filtered_observables[prediction_key] = {}
     for obs_label, obs_data in observables[prediction_key].items():
         filtered_obs_data = {}
-        
-        n_design_points = obs_data['y'].shape[1]
+
+        n_design_points = obs_data["y"].shape[1]
         keep_mask = np.ones(n_design_points, dtype=bool)
         keep_mask[design_points_to_filter] = False
-        
+
         for key, value in obs_data.items():
             if isinstance(value, np.ndarray) and value.ndim == 2:
                 # Filter columns (design points)
@@ -629,61 +637,61 @@ def apply_design_point_filtering(
                         filtered_systematics[sys_name] = sys_value[:, keep_mask]
                     else:
                         filtered_systematics[sys_name] = sys_value
-                filtered_obs_data[key] = filtered_systematics
+                filtered_obs_data[key] = filtered_systematics  # type: ignore[assignment]
             else:
                 filtered_obs_data[key] = value
-        
+
         filtered_observables[prediction_key][obs_label] = filtered_obs_data
-    
+
     # Filter corresponding Design array (rows)
     if design_key in observables:
         design = observables[design_key]
         keep_mask = np.ones(design.shape[0], dtype=bool)
         keep_mask[design_points_to_filter] = False
         filtered_observables[design_key] = design[keep_mask, :]
-    
+
     # Filter corresponding Design_indices
     if indices_key in observables:
         indices = observables[indices_key]
         keep_mask = np.ones(len(indices), dtype=bool)
         keep_mask[design_points_to_filter] = False
         filtered_observables[indices_key] = indices[keep_mask]
-    
+
     # Copy other Design/indices keys unchanged
     for key in ["Design", "Design_indices", "Design_validation", "Design_indices_validation"]:
         if key in observables and key != design_key and key != indices_key:
             filtered_observables[key] = observables[key]
-    
+
     logger.info(f"  {prediction_key}: {n_design_points} → {np.sum(keep_mask)} design points")
     if design_key in observables:
         logger.info(f"  {design_key}: {observables[design_key].shape} → {filtered_observables[design_key].shape}")
-    
+
     return filtered_observables
 
 
 def filter_problematic_design_points(
-    observables: Dict[str, Any],
+    observables: dict[str, Any],
     filtering_config: FilteringConfig,
     prediction_key: str = "Prediction",
-) -> Tuple[Dict[str, Any], List[int]]:
+) -> tuple[dict[str, Any], list[int]]:
     """
     High-level interface: Filter design points with excessive uncertainty.
-    
+
     This complements the existing smoothing workflow:
     - Existing: Find outliers → Interpolate → Keep all design points
     - New: Find design points with many outliers → Remove entirely
-    
+
     Usage: Call this BEFORE smoothing to remove worst design points,
            then smooth remaining mild outliers.
-    
+
     Args:
         observables: Input observables dictionary
         filtering_config: Configuration for filtering
         prediction_key: 'Prediction' or 'Prediction_validation'
-        
+
     Returns:
         (filtered_observables, list of removed design point indices)
-        
+
     Example:
         >>> config = FilteringConfig(
         ...     method='relative_statistical_error',
@@ -700,19 +708,14 @@ def filter_problematic_design_points(
     logger.info(f"  Threshold: {filtering_config.threshold}")
     logger.info(f"  Problem fraction threshold: {filtering_config.problem_fraction_threshold}")
     logger.info("=" * 70)
-    
-    design_points_to_filter = identify_design_points_to_filter(
-        observables, filtering_config, prediction_key
-    )
-    
+
+    design_points_to_filter = identify_design_points_to_filter(observables, filtering_config, prediction_key)
+
     if design_points_to_filter:
-        filtered_obs = apply_design_point_filtering(
-            observables, design_points_to_filter, prediction_key
-        )
+        filtered_obs = apply_design_point_filtering(observables, design_points_to_filter, prediction_key)
         logger.info(f"✓ Removed {len(design_points_to_filter)} design points")
         logger.info("=" * 70)
         return filtered_obs, design_points_to_filter
-    else:
-        logger.info("✓ No design points need filtering")
-        logger.info("=" * 70)
-        return observables, []
+    logger.info("✓ No design points need filtering")
+    logger.info("=" * 70)
+    return observables, []

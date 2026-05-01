@@ -1,0 +1,92 @@
+ci:
+  autoupdate_commit_msg: "chore: update pre-commit hooks"
+  autofix_commit_msg: "style: pre-commit fixes"
+
+repos:
+  # Useful to determine which files are included/excluded, tests of pre-commit, etc.
+  # Don't enable by default because it seems noisy. But I'll keep it around because
+  # it can be quite useful for debugging
+  # See: https://github.com/pre-commit/pre-commit/issues/1173#issuecomment-542341362
+  #- repo: meta
+  #  hooks:
+  #  - id: identity
+  #    name: identity (all)
+
+  - repo: https://github.com/adamchainz/blacken-docs
+    rev: "1.20.0"
+    hooks:
+      - id: blacken-docs
+        additional_dependencies: [black==24.*]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: "v6.0.0"
+    hooks:
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: check-yaml
+      - id: debug-statements
+      - id: end-of-file-fixer
+        exclude: ".patch"
+      - id: mixed-line-ending
+      - id: name-tests-test
+        args: ["--pytest-test-first"]
+      - id: requirements-txt-fixer
+      - id: trailing-whitespace
+        exclude: ".patch"
+
+  - repo: https://github.com/pre-commit/pygrep-hooks
+    rev: "v1.10.0"
+    hooks:
+      - id: rst-backticks
+      - id: rst-directive-colons
+      - id: rst-inline-touching-normal
+
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: "v4.0.0-alpha.8"
+    hooks:
+      - id: prettier
+        types_or: [yaml, markdown, html, css, scss, javascript, json]
+        args: ["--prose-wrap=preserve", "--print-width=120"]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: "v0.14.6"
+    hooks:
+      - id: ruff-check
+        args: ["--fix", "--show-fixes"]
+      - id: ruff-format
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: "v2.4.1"
+    hooks:
+      - id: codespell
+        additional_dependencies: [tomli]
+        # While it would be nice to have spell checking there, it doesn't handle the encoding of the output properly.
+        exclude: .ipynb
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: "v0.11.0.1"
+    hooks:
+      - id: shellcheck
+
+  - repo: local
+    hooks:
+      - id: disallow-caps
+        name: Disallow improper capitalization
+        language: pygrep
+        entry: PyBind|Numpy|Cmake|CCache|Github|PyTest
+        exclude: .pre-commit-config.yaml
+
+  - repo: https://github.com/abravalheri/validate-pyproject
+    rev: "v0.24.1"
+    hooks:
+      - id: validate-pyproject
+        additional_dependencies: ["validate-pyproject-schema-store[all]"]
+
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: "0.35.0"
+    hooks:
+      - id: check-dependabot
+      - id: check-github-workflows
+      - id: check-readthedocs

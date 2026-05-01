@@ -2,7 +2,7 @@
 #-------------------------------------------
 # General parameters
 
-output_dir: '/Users/zhanj82/Desktop/JetScapeSTAT/Bayesian/results/20230116_20250806/'
+output_dir: "/Users/zhanj82/Desktop/JetScapeSTAT/Bayesian/results/20230116_20250806/"
 
 initialize_observables: True
 preprocess_input_data: True
@@ -22,10 +22,10 @@ debug_level: 0
 
 #-------------------------------------------
 # The design points, predictions, and experimental data are located in tables produced by the aggregation machinery
-observable_table_dir: '/Users/zhanj82/Desktop/JetScapeSTAT/Bayesian/data/20230116/tables'
+observable_table_dir: "/Users/zhanj82/Desktop/JetScapeSTAT/Bayesian/data/20230116/tables"
 
 # We make use of some info in the JETSCAPE-analysis config that was used to aggregate/plot observables
-observable_config_dir: '/Users/zhanj82/Desktop/JetScapeSTAT/Bayesian/config'
+observable_config_dir: "/Users/zhanj82/Desktop/JetScapeSTAT/Bayesian/config"
 
 # Filename of the observables file that we will use. This could be the standard one, or it could
 # have some predictions preprocessing applied to it.
@@ -55,7 +55,7 @@ parameters:
     # Specify which kernels to include in the 'active' list -- can include multiple
     # Must have exactly one of: matern, rbf
     kernels:
-      active: ['matern', 'noise']
+      active: ["matern", "noise"]
 
       matern:
         nu: 1.5
@@ -72,8 +72,8 @@ parameters:
         type: "white"
         args:
           # NOTE: Can't raise to power in yaml, so you have to evaluate them by hand
-          noise_level: 0.25  # 0.5**2
-          noise_level_bounds: [0.0001, 1]  # [0.01**2, 1**2]
+          noise_level: 0.25 # 0.5**2
+          noise_level_bounds: [0.0001, 1] # [0.01**2, 1**2]
 
     # Gaussian Process Regressor
     GPR:
@@ -117,75 +117,118 @@ parameters:
 
 # Set general share parameters
 analysis_base: &model_base
-  model_name: 'MATTER+LBT'
-  parameterizations: ['exponential']
+  model_name: "MATTER+LBT"
+  parameterizations: ["exponential"]
   sqrts_list: [200, 2760, 5020]
-  centrality_range: [0,10]
+  centrality_range: [0, 10]
   # Can also be a list of centrality ranges. eg:
   #centrality_range: [[0, 10], [30, 50]]
-  recoil_scheme: 'negative_recominber'
+  recoil_scheme: "negative_recominber"
   parameterization:
     exponential:
-      names: ['$\alpha_S^{\rm{fix}}$', '$Q_0$', '$c_1$', '$c_2$', '$\tau_0$', '$c_3$']
+      names: ['$\alpha_S^{\rm{fix}}$', "$Q_0$", "$c_1$", "$c_2$", '$\tau_0$', "$c_3$"]
       min: [0.1, 1, 0.006737946999085467, 0.006737946999085467, 0, 0.049787068367863944]
       max: [0.5, 10, 10, 10, 1.5, 100]
     binomial:
-      names: ['$\alpha_S^{\rm{fix}}$', '$Q_0$', '$c_1$', '$c_2$', '$a$', '$b$', '$\tau_0$']
+      names: ['$\alpha_S^{\rm{fix}}$', "$Q_0$", "$c_1$", "$c_2$", "$a$", "$b$", '$\tau_0$']
       min: [0.1, 1, 0.006737946999085467, 0.006737946999085467, -10, -10, 0]
       max: [0.5, 10, 10, 10, 100, 100, 1.5]
   alpha: 0.2
   validation_indices: [200, 201] # For exp parameterization, these are the same for all sqrts (i.e. all points 200-229 inclusive)
   design_points_to_exclude: [
-    ###########
-    # 1st draft
-    ###########
-    # Found using n_RMS = 2.
-    ## Round 1
-    #18, 36, 37, 44, 48, 51, 69, 73, 77, 89, 100, 104, 111, 147, 165, 173, 188, 189,
-    ## Validation from round 1
-    #214, 224, 229,
-    ## Round 2 (none from validation)
-    #22, 43, 45, 97, 117, 126, 176,
-    ## Round 3 (none from validation)
-    #9, 13, 25, 134,
-    ## Round 4 (none from validation)
-    #8, 60, 108,
-    ## Round 5 (none from validation)
-    #59,
-    ###########
-    # 2nd draft
-    ###########
-    # Found using n_RMS = 2, n_max = 2 (with bug fixes compared to the first time)
-    # Round 1
-    ## Large statistical errors
-    ## Std
-    #18, 36, 37, 43, 44, 48, 51, 69, 73, 89, 97, 104, 111, 147, 168,
-    ## Validation
-    #214, 217, 224,
-    ## Large central value differences
-    #18, 21, 22, 28, 36, 48, 51, 59, 73, 74, 79, 89, 118, 121, 140, 142, 143, 147, 151, 168, 180, 187,
-    ## Validation
-    #200, 214,
-    # Combined:
-    18, 21, 22, 28, 36, 37, 43, 44, 48, 51, 59, 69, 73, 74, 79, 89, 97, 104, 111, 118, 121, 140, 142, 143, 147, 151, 168, 180, 187, 200, 214, 217, 224,
-    # Round 2
-    ## Large statistical errors
-    ## Std
-    #8, 9, 13, 45, 173,
-    ## Validation
-    #229,
-    ## Large central value differences
-    #8, 30, 98, 188,
-    # Combined:
-    8, 9, 13, 30, 45, 98, 173, 188, 229,
-    # Spot points based on observable correlations
-    # 125: theta_g and z_g have two very low point, that's far away from everything else
-    125, 203,
-    # Only shows up for 200__AuAu__inclusive_chjet__pt_star__R0.4__0-10 after restricting the input pt range
-    5, 131, 182,
-    # 2760__PbPb__inclusive_jet__pt_cms__R0.3__5-10 (somehow was missed earlier - I suppose removing other points reduced the variance)
-    65,
-  ]
+      ###########
+      # 1st draft
+      ###########
+      # Found using n_RMS = 2.
+      ## Round 1
+      #18, 36, 37, 44, 48, 51, 69, 73, 77, 89, 100, 104, 111, 147, 165, 173, 188, 189,
+      ## Validation from round 1
+      #214, 224, 229,
+      ## Round 2 (none from validation)
+      #22, 43, 45, 97, 117, 126, 176,
+      ## Round 3 (none from validation)
+      #9, 13, 25, 134,
+      ## Round 4 (none from validation)
+      #8, 60, 108,
+      ## Round 5 (none from validation)
+      #59,
+      ###########
+      # 2nd draft
+      ###########
+      # Found using n_RMS = 2, n_max = 2 (with bug fixes compared to the first time)
+      # Round 1
+      ## Large statistical errors
+      ## Std
+      #18, 36, 37, 43, 44, 48, 51, 69, 73, 89, 97, 104, 111, 147, 168,
+      ## Validation
+      #214, 217, 224,
+      ## Large central value differences
+      #18, 21, 22, 28, 36, 48, 51, 59, 73, 74, 79, 89, 118, 121, 140, 142, 143, 147, 151, 168, 180, 187,
+      ## Validation
+      #200, 214,
+      # Combined:
+      18,
+      21,
+      22,
+      28,
+      36,
+      37,
+      43,
+      44,
+      48,
+      51,
+      59,
+      69,
+      73,
+      74,
+      79,
+      89,
+      97,
+      104,
+      111,
+      118,
+      121,
+      140,
+      142,
+      143,
+      147,
+      151,
+      168,
+      180,
+      187,
+      200,
+      214,
+      217,
+      224,
+      # Round 2
+      ## Large statistical errors
+      ## Std
+      #8, 9, 13, 45, 173,
+      ## Validation
+      #229,
+      ## Large central value differences
+      #8, 30, 98, 188,
+      # Combined:
+      8,
+      9,
+      13,
+      30,
+      45,
+      98,
+      173,
+      188,
+      229,
+      # Spot points based on observable correlations
+      # 125: theta_g and z_g have two very low point, that's far away from everything else
+      125,
+      203,
+      # Only shows up for 200__AuAu__inclusive_chjet__pt_star__R0.4__0-10 after restricting the input pt range
+      5,
+      131,
+      182,
+      # 2760__PbPb__inclusive_jet__pt_cms__R0.3__5-10 (somehow was missed earlier - I suppose removing other points reduced the variance)
+      65,
+    ]
   # Optionally: apply cuts to x-variable ranges (e.g. hadron pt > 10 GeV)
   # This will remove any bins outside of the cut range for observable names containing the listed key
   #cuts:
@@ -201,16 +244,15 @@ analysis_hadron_base: &analysis_hadron
         <<: *default_emulator_parameters
 
         observable_list:
-          - 'hadron__pt_'
+          - "hadron__pt_"
     mcmc:
       <<: *default_mcmc_parameters
     closure:
       <<: *default_closure_parameters
   <<: *model_base
-  plot_panel_shapes: [[3,3], [3,3]]
+  plot_panel_shapes: [[3, 3], [3, 3]]
 
 analyses:
-
   ########################
   # Main analyses for QM23
   ########################
@@ -221,10 +263,10 @@ analyses:
       emulators:
         default_group:
           <<: *default_emulator_parameters
-          emulator_name: sk_learn
+          emulator_package: sk_learn
           n_pc: 5
           observable_list:
-            - 'jet__pt_'
+            - "jet__pt_"
           observable_exclude_list:
             - "pt_y_atlas"
             - "2760__PbPb__inclusive_chjet__pt_alice"
@@ -237,9 +279,9 @@ analyses:
         <<: *default_closure_parameters
     <<: *model_base
     cuts:
-      'chjet__pt_star__R0.2': [14, 100]
-      'chjet__pt_star__R0.4': [16, 100]
-    plot_panel_shapes: [[3,3], [3,3], [3,3]]
+      "chjet__pt_star__R0.2": [14, 100]
+      "chjet__pt_star__R0.4": [16, 100]
+    plot_panel_shapes: [[3, 3], [3, 3], [3, 3]]
 
   # analysis_jet_substructure_n_walkers_100_long_prod:
   #   parameters:
@@ -277,13 +319,6 @@ analyses:
   #     'chjet__pt_star__R0.2': [14, 100]
   #     'chjet__pt_star__R0.4': [16, 100]
   #   plot_panel_shapes: [[3,3], [3,3], [3,3], [3,3], [3,3]]
-
-
-
-
-
-
-
 
   #analysis_hadron10_1000:
   #  <<: *analysis_hadron

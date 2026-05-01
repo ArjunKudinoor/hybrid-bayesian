@@ -5,6 +5,9 @@
 .pdm-python
 __pycache__/
 
+# JS (pre-commit)
+node_modules/
+
 # VScode
 *.code-workspace
 .vscode/
@@ -12,5 +15,3 @@ __pycache__/
 # Data
 data/
 output/
-
-

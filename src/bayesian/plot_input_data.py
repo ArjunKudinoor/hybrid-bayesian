@@ -1,4 +1,4 @@
-""" Plot input data and predictions for Bayesian inference.
+"""Plot input data and predictions for Bayesian inference.
 
 authors: J.Mulligan, R.Ehlers
 """
@@ -7,20 +7,19 @@ from __future__ import annotations
 
 import inspect
 import logging
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import attrs
+import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing as npt
-import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 import statsmodels.api as sm
 
-from bayesian import data_IO, outliers_smoothing
-from bayesian.emulation import base
-
+from bayesian import data_IO, emulation, outliers_smoothing
 
 logger = logging.getLogger(__name__)
 
@@ -32,14 +31,14 @@ def chunk_observables_in_dataframe(
     base_title: str,
 ) -> Iterable[tuple[str, str, pd.DataFrame]]:
     current_index = 0
-    #for _ in range(observables.shape[1] // chunk_size):
+    # for _ in range(observables.shape[1] // chunk_size):
     for _ in range((len(df.columns) - 1) // chunk_size):
         # Select multiple slices of columns: the values of interest + design_point column at -1
         # See: https://stackoverflow.com/a/39393929
         # Continuous
-        current_df = df.iloc[:, np.r_[current_index:current_index + chunk_size, -1]]
+        current_df = df.iloc[:, np.r_[current_index : current_index + chunk_size, -1]]
         # Correlate early and late together
-        #current_df = df.iloc[:, np.r_[current_index:current_index + int(self.fixed_size / 2), -current_index - int(self.fixed_size/2) : -current_index-1, -1]]
+        # current_df = df.iloc[:, np.r_[current_index:current_index + int(self.fixed_size / 2), -current_index - int(self.fixed_size/2) : -current_index-1, -1]]
         label = f"{current_index}_{current_index + chunk_size}"
         if base_label:
             label = f"{base_label}_{label}"
@@ -70,8 +69,10 @@ class ObservableGrouping:
             raise ValueError(f"Invalid ObservableGrouping settings: {self}")
         return label
 
-    def gen(self, config: base.EmulatorOrganizationConfig, observables_filename: str, validation_set: bool) -> Iterable[tuple[str, str, pd.DataFrame]]:
-        """ Generate a sequence of DataFrames, each of which contains a subset of the observables.
+    def gen(
+        self, config: emulation.EmulationConfig, observables_filename: str, validation_set: bool
+    ) -> Iterable[tuple[str, str, pd.DataFrame]]:
+        """Generate a sequence of DataFrames, each of which contains a subset of the observables.
 
         :param np.ndarray observables: Predictions to be grouped.
         :param EmulationConfig config: The emulation config.
@@ -79,7 +80,7 @@ class ObservableGrouping:
         """
         # Setup
         # Data
-        all_observables_dict = data_IO.read_dict_from_h5(config.output_dir, observables_filename)
+        all_observables_dict = data_IO.read_dict_from_h5(config.analysis_settings.output_dir, observables_filename)
         # Add design point as a column so we can use it (eg. with hue)
         design_key = "Design_indices"
         if validation_set:
@@ -88,16 +89,16 @@ class ObservableGrouping:
 
         if self.observable_by_observable:
             observables = data_IO.predictions_matrix_from_h5(
-                config.output_dir,
+                config.analysis_settings.output_dir,
                 filename=observables_filename,
                 validation_set=validation_set,
-                observable_filter=config.observable_filter
+                observable_filter=config.observable_filter,
             )
             observables_dict = data_IO.observable_dict_from_matrix(
                 observables,
                 all_observables_dict,
                 validation_set=validation_set,
-                observable_filter=config.observable_filter
+                observable_filter=config.observable_filter,
             )
 
             for observable_key, observable in observables_dict["central_value"].items():
@@ -105,9 +106,9 @@ class ObservableGrouping:
                 df["design_point"] = design_points
                 yield f"observable_{observable_key}", observable_key, df
         elif self.emulator_groups:
-            for emulation_group_name, emulation_group_config in config.emulation_groups_config.items():
+            for emulation_group_name, emulation_group_config in config.emulation_settings.items():
                 observables = data_IO.predictions_matrix_from_h5(
-                    config.output_dir,
+                    config.analysis_settings.output_dir,
                     filename=observables_filename,
                     validation_set=validation_set,
                     observable_filter=emulation_group_config.observable_filter,
@@ -129,10 +130,10 @@ class ObservableGrouping:
 
         elif self.fixed_size is not None:
             observables = data_IO.predictions_matrix_from_h5(
-                config.output_dir,
+                config.analysis_settings.output_dir,
                 filename=observables_filename,
                 validation_set=validation_set,
-                observable_filter=config.observable_filter
+                observable_filter=config.observable_filter,
             )
 
             df = pd.DataFrame(observables)
@@ -141,7 +142,7 @@ class ObservableGrouping:
             yield from chunk_observables_in_dataframe(
                 df=df,
                 chunk_size=self.fixed_size,
-                base_label=f"",
+                base_label="",
                 base_title=f"Fixed size: {self.fixed_size}",
             )
         else:
@@ -149,16 +150,16 @@ class ObservableGrouping:
 
 
 ####################################################################################################################
-def plot(config: base.EmulatorOrganizationConfig):
-    '''
+def plot(config: emulation.EmulationConfig):
+    """
     Generate plots for input experimental data and predictions, using data written to file in the data import.
 
     :param EmulationConfig config: we take an instance of EmulationConfig as an argument to keep track of config info.
         Although these plots are before the emulation, we need emulation info (eg. what groups?), so it's extremely
         useful to have the config object.
-    '''
+    """
     # Plot output dir
-    plot_dir = Path(config.output_dir) / 'plot_input_data'
+    plot_dir = Path(config.analysis_settings.output_dir) / "plot_input_data"
     plot_dir.mkdir(parents=True, exist_ok=True)
 
     # Compare smoothed predictions for all design points
@@ -179,35 +180,35 @@ def plot(config: base.EmulatorOrganizationConfig):
             validation_set=validation_set,
         )
         ## And then combined for convenient comparison
-        #_plot_predictions_for_all_design_points(
+        # _plot_predictions_for_all_design_points(
         #    config=config,
         #    plot_dir=plot_dir,
         #    select_which_to_plot=["standard", "preprocessed"],
         #    grid_size=(3, 3),
         #    validation_set=validation_set,
-        #)
+        # )
 
-    #for observables_filename in ["observables.h5", "observables_preprocessed.h5"]:
-            # Group by emulator groups
-            #_plot_pairplot_correlations(
-            #    config=config,
-            #    plot_dir=plot_dir,
-            #    observable_grouping=ObservableGrouping(emulator_groups=True),
-            #    validation_set=validation_set,
-            #    observables_filename=observables_filename,
-            #)
+    # for observables_filename in ["observables.h5", "observables_preprocessed.h5"]:
+    # Group by emulator groups
+    # _plot_pairplot_correlations(
+    #    config=config,
+    #    plot_dir=plot_dir,
+    #    observable_grouping=ObservableGrouping(emulator_groups=True),
+    #    validation_set=validation_set,
+    #    observables_filename=observables_filename,
+    # )
 
 
 ####################################################################################################################
 def _plot_predictions_for_all_design_points(
-    config: base.EmulatorOrganizationConfig,
+    config: emulation.EmulationConfig,
     plot_dir: Path,
     select_which_to_plot: list[str],
     grid_size: tuple[int, int] | None = None,
     validation_set: bool = False,
     legend_kwargs: dict[str, Any] | None = None,
 ) -> None:
-    """ Plot comparison of predictions for all design points. """
+    """Plot comparison of predictions for all design points."""
     # Validation
     if grid_size is None:
         grid_size = (4, 4)
@@ -216,21 +217,29 @@ def _plot_predictions_for_all_design_points(
 
     # Setup
     logger.info(f"Plotting standard vs preprocessed predictions for {select_which_to_plot=}")
-    fontsize = 14. / grid_size[0]
+    fontsize = 14.0 / grid_size[0]
     prediction_key = "Prediction"
     if validation_set:
         prediction_key += "_validation"
 
     # Get data (Note: this is where the bin values are stored)
     # NOTE: It doesn't matter which filename we use here - it's the same for both
-    data = data_IO.data_dict_from_h5(config.output_dir, filename='observables.h5')
+    data = data_IO.data_dict_from_h5(config.analysis_settings.output_dir, filename="observables.h5")
 
     # Grab the observables to compare
-    all_observables = data_IO.read_dict_from_h5(config.output_dir, 'observables.h5')
-    all_observables_preprocessed = data_IO.read_dict_from_h5(config.output_dir, 'observables_preprocessed.h5')
-    colors = [sns.xkcd_rgb['dark sky blue'], sns.xkcd_rgb['medium green']]
+    all_observables = data_IO.read_dict_from_h5(config.analysis_settings.output_dir, "observables.h5")
+    all_observables_preprocessed = data_IO.read_dict_from_h5(
+        config.analysis_settings.output_dir, "observables_preprocessed.h5"
+    )
+    colors = [sns.xkcd_rgb["dark sky blue"], sns.xkcd_rgb["medium green"]]
 
-    sorted_observable_keys_iter = iter(list(data_IO.sorted_observable_list_from_dict( all_observables[prediction_key],)))
+    sorted_observable_keys_iter = iter(
+        list(
+            data_IO.sorted_observable_list_from_dict(
+                all_observables[prediction_key],
+            )
+        )
+    )
     counter = 0
     while True:
         fig, axes = plt.subplots(grid_size[0], grid_size[1], constrained_layout=True)
@@ -242,14 +251,16 @@ def _plot_predictions_for_all_design_points(
             break
         for observable_key, ax in observable_key_ax_pairs:
             # Use data to get the bin centers
-            xmin = data[observable_key]['xmin']
-            xmax = data[observable_key]['xmax']
+            xmin = data[observable_key]["xmin"]
+            xmax = data[observable_key]["xmax"]
             x = (xmin + xmax) / 2
             # Plot each design point separately
             observable = all_observables[prediction_key][observable_key]["y"]
             observable_preprocessed = all_observables_preprocessed[prediction_key][observable_key]["y"]
             for i_design_point in range(observable_preprocessed.shape[1]):
-                for label, color, obs in zip(["standard", "preprocessed"], colors, [observable, observable_preprocessed]):
+                for label, color, obs in zip(
+                    ["standard", "preprocessed"], colors, [observable, observable_preprocessed]
+                ):
                     if label not in select_which_to_plot:
                         continue
                     ax.plot(
@@ -258,19 +269,19 @@ def _plot_predictions_for_all_design_points(
                         linewidth=2,
                         alpha=0.2,
                         color=color,
-                        label=label if i_design_point == 0 else None
+                        label=label if i_design_point == 0 else None,
                     )
 
             # This should practically cover reasonable observable ranges, but prevent giant outliers
             # from obscuring the details that we're interested in
             ax.set_ylim([-0.5, 2])
             ax.legend(
-                loc='upper right',
+                loc="upper right",
                 title=observable_key,
                 title_fontsize=fontsize,
                 fontsize=fontsize,
                 frameon=False,
-                **legend_kwargs
+                **legend_kwargs,
             )
 
         # Write figure to file and move to next one
@@ -288,7 +299,7 @@ def _plot_predictions_for_all_design_points(
 
 ####################################################################################################################
 def _plot_pairplot_correlations(
-    config: base.EmulatorOrganizationConfig,
+    config: emulation.EmulationConfig,
     plot_dir: Path,
     observable_grouping: ObservableGrouping | None = None,
     outliers_config: outliers_smoothing.OutliersConfig | None = None,
@@ -297,7 +308,7 @@ def _plot_pairplot_correlations(
     validation_set: bool = False,
     observables_filename: str = "observables.h5",
 ) -> dict[str, set]:
-    """ Plot pair correlations.
+    """Plot pair correlations.
 
     Note that there are many configuration options, and they may not all be compatible with each other.
 
@@ -317,12 +328,21 @@ def _plot_pairplot_correlations(
 
     # Setup
     if use_experimental_data:
-        observables = data_IO.data_array_from_h5(config.output_dir, filename=observables_filename, observable_filter=config.observable_filter)
+        observables = data_IO.data_array_from_h5(
+            config.analysis_settings.output_dir,
+            filename=observables_filename,
+            observable_filter=config.observable_filter,
+        )
         # Focus on central values
         observables = observables["y"]
         # In the case of data, this is trivially one "design point"
     else:
-        observables = data_IO.predictions_matrix_from_h5(config.output_dir, filename=observables_filename, validation_set=validation_set, observable_filter=config.observable_filter)
+        observables = data_IO.predictions_matrix_from_h5(
+            config.analysis_settings.output_dir,
+            filename=observables_filename,
+            validation_set=validation_set,
+            observable_filter=config.observable_filter,
+        )
 
     # Determine output name
     observables_filename_label = observables_filename.split(".")[0]
@@ -337,7 +357,9 @@ def _plot_pairplot_correlations(
         filename += "__outliers"
 
     # We want a shape of (n_design_points, n_features)
-    df_generator = observable_grouping.gen(config=config, observables_filename=observables_filename, validation_set=validation_set)
+    df_generator = observable_grouping.gen(
+        config=config, observables_filename=observables_filename, validation_set=validation_set
+    )
 
     # k -> v is label -> design_points
     identified_outliers: dict[str, set[int]] = {}
@@ -345,7 +367,7 @@ def _plot_pairplot_correlations(
         logger.debug(f"Pair plotting columns: {current_df.columns=}")
 
         # Useful early stopping for debugging...
-        #if i_group > 3:
+        # if i_group > 3:
         #    break
 
         # Here, we'll practically want to create an sns.pairplot, but we can't configure it directly
@@ -356,7 +378,7 @@ def _plot_pairplot_correlations(
         variables.remove("design_point")
         # And finally plot
         # With the standard sns call, we can't access the regression
-        #g = sns.PairGrid(current_df, vars=variables)
+        # g = sns.PairGrid(current_df, vars=variables)
         # This new class allows us to access the regression results
         g = PairGridWithRegression(current_df, vars=variables)
         regression_results = None
@@ -401,16 +423,22 @@ def _plot_pairplot_correlations(
                         # I'm sure that there's a way to do this directly from statsmodels, but I find their docs to be difficult to read.
                         # Since this is a simple case, we'll just do it by hand
                         linear_fit = fit_result.params[slope_key] * _x + fit_result.params["const"]
-                        current_ax.plot(_x, linear_fit + outliers_config.n_RMS * rms, color='red', linestyle="dashed", linewidth=1.5)
-                        current_ax.plot(_x, linear_fit - outliers_config.n_RMS * rms, color='red', linestyle="dashed", linewidth=1.5)
+                        current_ax.plot(
+                            _x, linear_fit + outliers_config.n_RMS * rms, color="red", linestyle="dashed", linewidth=1.5
+                        )
+                        current_ax.plot(
+                            _x, linear_fit - outliers_config.n_RMS * rms, color="red", linestyle="dashed", linewidth=1.5
+                        )
 
-                        for (design_point, x, y) in zip(
+                        for design_point, x, y in zip(
                             current_df["design_point"][outlier_indices],
                             current_df[x_column][outlier_indices],
                             current_df[y_column][outlier_indices],
                         ):
                             logger.debug(f"Outlier at {design_point=}")
-                            current_ax.annotate(f"_{design_point}", (x, y), fontsize=8, color=sns.xkcd_rgb['dark sky blue'])
+                            current_ax.annotate(
+                                f"_{design_point}", (x, y), fontsize=8, color=sns.xkcd_rgb["dark sky blue"]
+                            )
                             identified_outliers[label].add(design_point)
             # Don't bother keeping if it's fully empty (just simplifies the output)
             if not identified_outliers[label]:
@@ -418,35 +446,33 @@ def _plot_pairplot_correlations(
 
         # Annotate data points with design point labels to identify them
         if annotate_design_points:
-            #count = 0
+            # count = 0
             for i_col, x_column in enumerate(variables):
                 for i_row, y_column in enumerate(variables):
                     if i_col < i_row:  # Skip the upper triangle + diagonal
                         current_ax = g.axes[i_row, i_col]
-                        #current_ax.text(0.1, 0.9, s=f"count={count}", fontsize=8, color='blue', transform=current_ax.transAxes)
-                        #count += 1
-                        for (design_point, x, y) in zip(
-                            current_df["design_point"],
-                            current_df[x_column],
-                            current_df[y_column]
+                        # current_ax.text(0.1, 0.9, s=f"count={count}", fontsize=8, color='blue', transform=current_ax.transAxes)
+                        # count += 1
+                        for design_point, x, y in zip(
+                            current_df["design_point"], current_df[x_column], current_df[y_column]
                         ):
-                            current_ax.annotate(design_point, (x, y), fontsize=8, color='red')
+                            current_ax.annotate(design_point, (x, y), fontsize=8, color="red")
 
         # Add title
         g.fig.suptitle(title, fontsize=26)
 
-        #plt.tight_layout()
+        # plt.tight_layout()
         name = f"{filename}__{label}"
         logger.info(f"Plotting {name=}")
         plt.savefig(plot_dir / f"{name}.pdf")
         # Cleanup
-        plt.close('all')
+        plt.close("all")
 
     return identified_outliers
 
 
 def _distance_from_line(x: npt.NDArray[np.number], y: npt.NDArray[np.number], m: float, b: float) -> np.ndarray:
-    """ Calculate the distance of each point from a line.
+    """Calculate the distance of each point from a line.
 
     :param np.ndarray x: x values of points.
     :param np.ndarray y: y values of points.
@@ -459,7 +485,7 @@ def _distance_from_line(x: npt.NDArray[np.number], y: npt.NDArray[np.number], m:
 
 
 class PairGridWithRegression(sns.PairGrid):
-    """ PairGrid where we can return the regression results.
+    """PairGrid where we can return the regression results.
 
     Sadly, this isn't possible with seaborn, so we have to work it out ourselves.
     Made minimal edits of seaborn.PairGrid from:
@@ -467,6 +493,7 @@ class PairGridWithRegression(sns.PairGrid):
     commit: aebf7d8dba58b41090cefbfea4074682edf62349 . All that was added was the simplest way to return values.
     It's not robust, and almost certainly won't work in all cases, but I think it will fail clearly.
     """
+
     def map(self, func, **kwargs):
         """Plot with the same function in every subplot.
 
@@ -545,6 +572,7 @@ class PairGridWithRegression(sns.PairGrid):
         # their artists onto the axes. This is probably superior in general, but
         # we'll need a better way to handle it in the axisgrid functions.
         from seaborn.distributions import histplot, kdeplot
+
         if func is histplot or func is kdeplot:
             self._extract_legend_handles = True
 
@@ -596,9 +624,13 @@ class PairGridWithRegression(sns.PairGrid):
             hue = data.get(self._hue_var)
 
         if "hue" not in kwargs:
-            kwargs.update({
-                "hue": hue, "hue_order": self._hue_order, "palette": self._orig_palette,
-            })
+            kwargs.update(
+                {
+                    "hue": hue,
+                    "hue_order": self._hue_order,
+                    "palette": self._orig_palette,
+                }
+            )
         result = func(x=x, y=y, **kwargs)
 
         self._update_legend_data(ax)
@@ -627,15 +659,13 @@ class PairGridWithRegression(sns.PairGrid):
         hue_grouped = self.data.groupby(self.hue_vals)
         results = None
         for k, label_k in enumerate(self._hue_order):
-
             kws = kwargs.copy()
 
             # Attempt to get data for this level, allowing for empty
             try:
                 data_k = hue_grouped.get_group(label_k)
             except KeyError:
-                data_k = pd.DataFrame(columns=axes_vars,
-                                      dtype=float)
+                data_k = pd.DataFrame(columns=axes_vars, dtype=float)
 
             if self._dropna:
                 data_k = data_k[axes_vars].dropna()
@@ -660,10 +690,17 @@ class PairGridWithRegression(sns.PairGrid):
 
 
 def simple_regplot(
-    x, y, n_std=2, n_pts=100, ax=None, scatter_kws=None, line_kws=None, ci_kws=None,
+    x,
+    y,
+    n_std=2,
+    n_pts=100,
+    ax=None,
+    scatter_kws=None,
+    line_kws=None,
+    ci_kws=None,
     **kwargs,
 ):
-    """ Draw a regression line with error interval.
+    """Draw a regression line with error interval.
 
     From: https://stackoverflow.com/a/59756979 . This can be used as an approximately drop-in replacement for
     sns.regplot, but the difference is that it returns the fit results. This works nicely for simpler plots,
