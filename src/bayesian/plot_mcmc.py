@@ -18,7 +18,7 @@ from matplotlib.collections import PathCollection
 
 sns.set_context("paper", rc={"font.size": 18, "axes.titlesize": 18, "axes.labelsize": 18})
 
-from bayesian import data_IO, emulation, plot_utils
+from bayesian import data_IO, emulation, plot_posterior_transform, plot_utils
 from bayesian import mc_sampling as mcmc
 
 logger = logging.getLogger(__name__)
@@ -55,10 +55,11 @@ def plot(config: mcmc.MCConfig):
     logger.info(f"Chain is of size: {os.path.getsize(config.mcmc_outputfile) / (1024 * 1024):.1f} MB")
 
     # MCMC plots
-    _plot_acceptance_fraction(results["acceptance_fraction"], plot_dir, config)
+    _plot_acceptance_fraction(results["acceptance_fraction"], plot_dir)
     _plot_log_posterior(results["log_prob"], plot_dir, config)
     _plot_autocorrelation_time(results, plot_dir, config)
     _plot_posterior_pairplot(chain, plot_dir, config)
+    plot_posterior_transform.plot(chain, config, random_seed=results.get("random_seed"))
 
     # Posterior vs. Design observables
     design = data_IO.design_array_from_h5(config.output_dir, filename=config.observables_filename)
@@ -68,7 +69,7 @@ def plot(config: mcmc.MCConfig):
 
 
 # ---------------------------------------------------------------
-def _plot_acceptance_fraction(acceptance_fraction, plot_dir, config):
+def _plot_acceptance_fraction(acceptance_fraction, plot_dir):
     """
     Plot histogram of acceptance_fraction for each walker.
 
@@ -78,7 +79,7 @@ def _plot_acceptance_fraction(acceptance_fraction, plot_dir, config):
     :param 1darray acceptance_fraction: fraction of steps accepted for each walker -- shape (n_walkers,)
     """
     plt.figure(figsize=(10, 6))
-    plt.plot(np.arange(config.n_walkers), acceptance_fraction, marker="o", color=sns.xkcd_rgb["denim blue"])
+    plt.plot(np.arange(len(acceptance_fraction)), acceptance_fraction, marker="o", color=sns.xkcd_rgb["denim blue"])
     plt.ylim(0, 1)
     plt.xlabel("Walker Index")
     plt.ylabel("Acceptance Fraction")

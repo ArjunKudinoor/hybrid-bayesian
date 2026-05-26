@@ -89,3 +89,63 @@ def test_exclude_design_points(caplog: Any, design_points_to_exclude: list[int],
 
         assert values not in design_points_parameters
         assert values not in design_points_parameters_validation
+
+
+def test_initialize_observables_ignores_sidecar_and_stray_files(tmp_path: Path) -> None:
+    table_dir = tmp_path / "tables"
+    data_dir = table_dir / "Data"
+    design_dir = table_dir / "Design"
+    prediction_dir = table_dir / "Prediction"
+    data_dir.mkdir(parents=True)
+    design_dir.mkdir()
+    prediction_dir.mkdir()
+
+    (design_dir / "Design__test1.dat").write_text(
+        "# Version 1.0\n"
+        "# Design point indices (row index): 0 1\n"
+        "0.1 0.2\n"
+        "0.3 0.4\n"
+    )
+    (design_dir / ".DS_Store").write_text("junk\n")
+    (design_dir / "Design__test1.dat:Zone.Identifier").write_text("junk\n")
+
+    (data_dir / "Data__5020__PbPb__hadron__pt_ch_cms____0-5.dat").write_text(
+        "# Label xmin xmax y stat,low stat,high sys,low sys,high\n"
+        "10 20 0.5 0.01 0.01 0.02 0.02\n"
+    )
+    (data_dir / "Thumbs.db").write_text("junk\n")
+    (data_dir / "Data__5020__PbPb__hadron__pt_ch_cms____0-5.dat:Zone.Identifier").write_text("junk\n")
+
+    prediction_header = (
+        "# Version 2.0\n"
+        "# design_point0 design_point1\n"
+    )
+    (prediction_dir / "Prediction__test1__5020__PbPb__hadron__pt_ch_cms____0-5__values.dat").write_text(
+        prediction_header + "0.45 0.55\n"
+    )
+    (prediction_dir / "Prediction__test1__5020__PbPb__hadron__pt_ch_cms____0-5__errors.dat").write_text(
+        prediction_header + "0.01 0.01\n"
+    )
+    (prediction_dir / "backup.tmp").write_text("junk\n")
+    (prediction_dir / "Prediction__test1__5020__PbPb__hadron__pt_ch_cms____0-5__values.dat:Zone.Identifier").write_text(
+        "junk\n"
+    )
+
+    analysis_config = {
+        "sqrts_list": [5020],
+        "centrality_range": [[0, 10]],
+        "validation_indices": [2, 2],
+        "parameters": {
+            "emulators": {
+                "default_group": {
+                    "observable_list": [{"observable": "5020__PbPb__hadron__pt_ch_cms"}],
+                }
+            }
+        },
+    }
+
+    observables = data_IO.initialize_observables_dict_from_tables(str(table_dir), analysis_config, "test1")
+
+    assert "5020__PbPb__hadron__pt_ch_cms____0-5" in observables["Data"]
+    assert observables["Design"].shape == (2, 2)
+    assert observables["Prediction"]["5020__PbPb__hadron__pt_ch_cms____0-5"]["y"].shape == (1, 2)

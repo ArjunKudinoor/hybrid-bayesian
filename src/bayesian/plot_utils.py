@@ -8,6 +8,7 @@ Module with plotting utilities that can be shared across multiple other plotting
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 from typing import Any
 
@@ -78,7 +79,7 @@ def plot_observable_panels(
     data = data_IO.data_dict_from_h5(config.output_dir, filename="observables.h5")  # type: ignore[no-untyped-call]
 
     # Group observables into subplots, with shapes specified in config
-    plot_panel_shapes = config.raw_analysis_config["plot_panel_shapes"]
+    plot_panel_shapes = config.raw_analysis_config.get("plot_panel_shapes", _default_plot_panel_shapes(len(sorted_observable_list)))
     n_panels = sum(x[0] * x[1] for x in plot_panel_shapes)
     assert len(sorted_observable_list) <= n_panels, (
         f"You specified {n_panels} panels, but have {len(sorted_observable_list)} observables"
@@ -126,7 +127,7 @@ def plot_observable_panels(
         fontsize = 14.0 / plot_shape[0]
         markersize = 8.0 / plot_shape[0]
         if i_subplot == 0:
-            fig, axs = plt.subplots(plot_shape[0], plot_shape[1], constrained_layout=True)
+            fig, axs = plt.subplots(plot_shape[0], plot_shape[1], constrained_layout=True, squeeze=False)
             for ax in axs.flat:
                 ax.tick_params(labelsize=fontsize)
             row = 0
@@ -206,6 +207,15 @@ def plot_observable_panels(
 
             plt.savefig(Path(plot_dir) / f"{filename}__{i_plot}.pdf")
             plt.close(fig)
+
+
+def _default_plot_panel_shapes(n_observables: int) -> list[list[int]]:
+    """Choose a reasonable single-panel grid when config does not specify one."""
+    if n_observables <= 0:
+        return [[1, 1]]
+    n_cols = max(1, min(3, math.ceil(math.sqrt(n_observables))))
+    n_rows = math.ceil(n_observables / n_cols)
+    return [[n_rows, n_cols]]
 
 
 def plot_histogram_1d(

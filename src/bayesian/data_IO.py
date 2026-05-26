@@ -164,6 +164,16 @@ def _recursive_defaultdict():
     return defaultdict(_recursive_defaultdict)
 
 
+def _should_skip_table_filename(filename: str) -> bool:
+    """Return True for filesystem sidecars that should never be parsed as tables."""
+    return filename.endswith(":Zone.Identifier")
+
+
+def _is_table_file(filename: str, prefix: str) -> bool:
+    """Return True when a filename matches the expected table naming convention."""
+    return filename.startswith(prefix) and filename.endswith(".dat") and not _should_skip_table_filename(filename)
+
+
 def _validate_and_flatten_array(array: np.ndarray, name: str) -> np.ndarray:
     """
     Validate array is 1D or flattenable to 1D.
@@ -1095,8 +1105,12 @@ def initialize_observables_dict_from_tables(
         logger.info("No systematic correlations found in config")
 
     for filename in os.listdir(data_dir):
+        if _should_skip_table_filename(filename):
+            logger.debug(f"Skipping sidecar file in Data directory: {filename}")
+            continue
+
         # Skip files that don't match the expected Data file pattern
-        if not filename.startswith("Data__"):
+        if not _is_table_file(filename, "Data__"):
             logger.debug(f"Skipping non-data file in Data directory: {filename}")
             continue
 
@@ -1196,6 +1210,14 @@ def initialize_observables_dict_from_tables(
     design_points_to_exclude = analysis_config.get("design_points_to_exclude", [])
     design_dir = os.path.join(table_dir, "Design")
     for filename in os.listdir(design_dir):
+        if _should_skip_table_filename(filename):
+            logger.debug(f"Skipping sidecar file in Design directory: {filename}")
+            continue
+
+        if not _is_table_file(filename, "Design__"):
+            logger.debug(f"Skipping non-design file in Design directory: {filename}")
+            continue
+
         if _filename_to_labels(filename)[1] == parameterization:
             # Explanation of variables:
             #  - design_point_parameters: The parameters of the design points, with one per design point.
@@ -1224,6 +1246,14 @@ def initialize_observables_dict_from_tables(
     # Read predictions and uncertainty
     prediction_dir = os.path.join(table_dir, "Prediction")
     for filename in os.listdir(prediction_dir):
+        if _should_skip_table_filename(filename):
+            logger.debug(f"Skipping sidecar file in Prediction directory: {filename}")
+            continue
+
+        if not _is_table_file(filename, "Prediction__"):
+            logger.debug(f"Skipping non-prediction file in Prediction directory: {filename}")
+            continue
+
         if "values" in filename and parameterization in filename:
             if _accept_observable(analysis_config, filename):
                 filename_prediction_values = filename
@@ -1797,6 +1827,9 @@ def _accept_observable(analysis_config, filename):
     :param dict analysis_config: dictionary of analysis configuration
     :param str filename: filename of table for the considered observable
     """
+
+    if _should_skip_table_filename(filename) or not filename.endswith(".dat"):
+        return False
 
     observable_label, _ = _filename_to_labels(filename)
 

@@ -27,6 +27,15 @@ logger = logging.getLogger(__name__)
 _register_name = "emcee"
 
 
+def _apply_random_seed(sampler: emcee.EnsembleSampler, seed: int | None) -> None:
+    """Seed emcee's internal RNG so runs are reproducible beyond initial positions."""
+    if seed is None:
+        return
+
+    rng = np.random.RandomState(seed)
+    sampler.random_state = rng.get_state()
+
+
 @attrs.define
 class SamplerSettings:
     """Settings for the emcee affine-invariant ensemble sampler.
@@ -48,6 +57,7 @@ class SamplerSettings:
     n_sampling_steps: int = attrs.field()
     n_logging_steps: int = attrs.field()
     settings: dict[str, Any] = attrs.field()
+    random_seed: int | None = attrs.field(default=None)
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> SamplerSettings:
@@ -57,6 +67,7 @@ class SamplerSettings:
             n_burn_steps=config["n_burn_steps"],
             n_sampling_steps=config["n_sampling_steps"],
             n_logging_steps=config["n_logging_steps"],
+            random_seed=config.get("random_seed"),
             settings=config,
         )
 
@@ -110,8 +121,9 @@ def run_sampling(
             kwargs={"set_to_infinite_outside_bounds": True},
             pool=pool,
         )
+        _apply_random_seed(sampler, sampler_settings.random_seed)
 
-        rng = np.random.default_rng()
+        rng = np.random.default_rng(sampler_settings.random_seed)
         random_pos = rng.uniform(parameter_min, parameter_max, (sampler_settings.n_walkers, parameter_ndim))
 
         # First half of burn-in from random positions
@@ -143,6 +155,12 @@ def run_sampling(
             "chain": sampler.get_chain(),
             "acceptance_fraction": sampler.acceptance_fraction,
             "log_prob": sampler.get_log_prob(),
+            "random_seed": sampler_settings.random_seed if sampler_settings.random_seed is not None else -1,
+            "chain_diagnostics": mc_sampling_base.compute_chain_diagnostics(
+                sampler.get_chain(),
+                np.asarray(parameter_min, dtype=np.float64),
+                np.asarray(parameter_max, dtype=np.float64),
+            ),
         }
         try:
             output_dict["autocorrelation_time"] = sampler.get_autocorr_time()

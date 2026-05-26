@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from bayesian.mc_sampling.base import (  # noqa: F401
     MCConfig,
+    compute_chain_diagnostics,
     credible_interval,
     map_parameters,
     run_mcmc,
