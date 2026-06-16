@@ -256,6 +256,80 @@ def map_parameters(posterior: npt.NDArray[np.float64], method: str = "quantile")
     raise ValueError(msg)
 
 
+def compute_chain_diagnostics(
+    chain: npt.NDArray[np.float64],
+    parameter_min: npt.NDArray[np.float64],
+    parameter_max: npt.NDArray[np.float64],
+    *,
+    boundary_fraction: float = 0.005,
+    late_fraction: float = 0.2,
+) -> dict[str, npt.NDArray[np.float64] | float]:
+    """Compute walker-level QA diagnostics for a chain.
+
+    These diagnostics are lightweight summary metadata intended for saved run
+    artifacts and regression tests, not just ad hoc notebook inspection.
+    """
+    chain = np.asarray(chain, dtype=np.float64)
+    parameter_min = np.asarray(parameter_min, dtype=np.float64)
+    parameter_max = np.asarray(parameter_max, dtype=np.float64)
+
+    if chain.ndim != 3:
+        msg = f"Expected chain with shape (n_steps, n_walkers, n_dim), got {chain.shape}"
+        raise ValueError(msg)
+
+    n_dim = chain.shape[2]
+    if parameter_min.shape != (n_dim,) or parameter_max.shape != (n_dim,):
+        msg = (
+            f"Expected parameter bounds with shape ({n_dim},), got "
+            f"{parameter_min.shape} and {parameter_max.shape}"
+        )
+        raise ValueError(msg)
+    if not 0.0 <= boundary_fraction <= 1.0:
+        msg = f"boundary_fraction must be in [0, 1], got {boundary_fraction}"
+        raise ValueError(msg)
+    if not 0.0 <= late_fraction <= 1.0:
+        msg = f"late_fraction must be in [0, 1], got {late_fraction}"
+        raise ValueError(msg)
+
+    n_steps, n_walkers, _ = chain.shape
+    late_start = int((1.0 - late_fraction) * n_steps)
+    widths = parameter_max - parameter_min
+    lower_threshold = parameter_min + boundary_fraction * widths
+    upper_threshold = parameter_max - boundary_fraction * widths
+
+    near_lower = chain <= lower_threshold[np.newaxis, np.newaxis, :]
+    near_upper = chain >= upper_threshold[np.newaxis, np.newaxis, :]
+
+    longest_repeat_run = np.zeros(n_walkers, dtype=np.int64)
+    for walker_idx in range(n_walkers):
+        equal_steps = np.all(
+            np.isclose(chain[1:, walker_idx, :], chain[:-1, walker_idx, :], atol=0.0, rtol=0.0),
+            axis=1,
+        )
+        best = 0
+        current = 0
+        for repeated in equal_steps:
+            if repeated:
+                current = current + 1 if current else 2
+                best = max(best, current)
+            else:
+                current = 0
+        longest_repeat_run[walker_idx] = best
+
+    diagnostics: dict[str, npt.NDArray[np.float64] | float] = {
+        "boundary_fraction": float(boundary_fraction),
+        "late_fraction": float(late_fraction),
+        "near_lower_counts": near_lower.sum(axis=0).astype(np.int64),
+        "near_upper_counts": near_upper.sum(axis=0).astype(np.int64),
+        "late_near_lower_counts": near_lower[late_start:, :, :].sum(axis=0).astype(np.int64),
+        "late_near_upper_counts": near_upper[late_start:, :, :].sum(axis=0).astype(np.int64),
+        "max_per_walker": chain.max(axis=0),
+        "min_per_walker": chain.min(axis=0),
+        "longest_repeat_run": longest_repeat_run,
+    }
+    return diagnostics
+
+
 def _validate_sampler(name: str, module: ModuleType) -> None:
     """Validate that a sampler module follows the expected interface."""
     for attr in ["run_sampling", "SamplerSettings"]:

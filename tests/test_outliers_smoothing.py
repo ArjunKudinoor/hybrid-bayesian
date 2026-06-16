@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import numpy as np
 import pytest  # noqa: F401
@@ -14,19 +13,15 @@ from bayesian import outliers_smoothing
 
 logger = logging.getLogger(__name__)
 
-_data_dir = Path(__file__).parent / "test_data"
-
 
 def test_smoothing() -> None:
-    # Setup: Load data
-    measured_data = np.loadtxt(_data_dir / "tables" / "Data" / "Data__5020__PbPb__hadron__pt_ch_cms____0-5.dat", ndmin=2)
-    # Calculate bin centers from data
-    x_min = measured_data[:, 0]
-    x_max = measured_data[:, 1]
-    bin_centers = x_min + (x_max - x_min) / 2.
-    # And load values and errors
-    values = np.loadtxt(_data_dir / "tables" / "Prediction" / "Prediction__exponential__5020__PbPb__hadron__pt_ch_cms____0-5__values.dat", ndmin=2)
-    y_err = np.loadtxt(_data_dir / "tables" / "Prediction" / "Prediction__exponential__5020__PbPb__hadron__pt_ch_cms____0-5__errors.dat", ndmin=2)
+    # Build a small synthetic observable with one obvious outlier.
+    bin_centers = np.linspace(20.0, 70.0, 6)
+    values = np.tile(np.arange(10.0, 16.0)[:, np.newaxis], (1, 10))
+    values = values + np.linspace(0.0, 0.9, 10)
+    values[2, 5] = 40.0
+    y_err = np.full_like(values, 0.2)
+    y_err[2, 5] = 8.0
 
     # Identify outliers and smooth them
     output_values, output_y_err, outliers_that_cannot_be_removed = outliers_smoothing.find_and_smooth_outliers_standalone(
@@ -45,3 +40,6 @@ def test_smoothing() -> None:
 
     assert not np.allclose(output_values, values)
     assert not np.allclose(output_y_err, y_err)
+    assert output_values.shape == values.shape
+    assert output_y_err.shape == y_err.shape
+    assert not outliers_that_cannot_be_removed
